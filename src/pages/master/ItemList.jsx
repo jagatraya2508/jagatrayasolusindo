@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 function ItemList() {
     const [items, setItems] = useState([]);
     const [units, setUnits] = useState([]);
+    const [conversions, setConversions] = useState([]); // New state for conversion codes
+    const [unitConversions, setUnitConversions] = useState([]); // New state for full conversion data
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
@@ -12,13 +14,14 @@ function ItemList() {
     const [models, setModels] = useState([]);
     const [formData, setFormData] = useState({
         code: '', name: '', unit: '', standard_cost: 0, standard_price: 0,
-        group_id: '', category_id: '', brand_id: '', model_id: ''
+        group_id: '', category_id: '', brand_id: '', model_id: '', conversion_code: ''
     });
 
     useEffect(() => {
         fetchItems();
         fetchUnits();
         fetchDropdowns();
+        fetchConversions();
     }, []);
 
     const fetchDropdowns = async () => {
@@ -61,6 +64,22 @@ function ItemList() {
         }
     };
 
+    const fetchConversions = async () => {
+        try {
+            const response = await fetch('/api/unit-conversions');
+            const data = await response.json();
+            if (data.success) {
+                // Extract unique conversion codes
+                const activeConversions = data.data.filter(c => c.active === 'Y');
+                const uniqueCodes = [...new Set(activeConversions.map(c => c.conversion_code))];
+                setConversions(uniqueCodes);
+                setUnitConversions(activeConversions);
+            }
+        } catch (error) {
+            console.error('Error fetching conversions:', error);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         try {
@@ -94,7 +113,8 @@ function ItemList() {
             code: item.code, name: item.name, unit: item.unit || '',
             standard_cost: item.standard_cost || 0, standard_price: item.standard_price || 0,
             group_id: item.group_id || '', category_id: item.category_id || '',
-            brand_id: item.brand_id || '', model_id: item.model_id || ''
+            brand_id: item.brand_id || '', model_id: item.model_id || '',
+            conversion_code: item.conversion_code || ''
         });
         setShowForm(true);
     };
@@ -114,7 +134,7 @@ function ItemList() {
     };
 
     const resetForm = () => {
-        setFormData({ code: '', name: '', unit: '', standard_cost: 0, standard_price: 0, group_id: '', category_id: '', brand_id: '', model_id: '' });
+        setFormData({ code: '', name: '', unit: '', standard_cost: 0, standard_price: 0, group_id: '', category_id: '', brand_id: '', model_id: '', conversion_code: '' });
     };
 
     const formatCurrency = (value) => {
@@ -157,18 +177,43 @@ function ItemList() {
                                     required
                                 />
                             </div>
-                            <div className="form-group">
-                                <label>Satuan</label>
-                                <select
-                                    value={formData.unit}
-                                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                                    required
-                                >
-                                    <option value="">-- Pilih Satuan --</option>
-                                    {units.map(u => (
-                                        <option key={u.id} value={u.code}>{u.code} - {u.name}</option>
-                                    ))}
-                                </select>
+                            <div className="form-row">
+                                <div className="form-group">
+                                    <label>Kode Konversi (Opsional)</label>
+                                    <select
+                                        value={formData.conversion_code || ''}
+                                        onChange={e => setFormData({ ...formData, conversion_code: e.target.value, unit: '' })}
+                                    >
+                                        <option value="">-- Tidak Ada --</option>
+                                        {conversions.map(code => <option key={code} value={code}>{code}</option>)}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label>Satuan Base</label>
+                                    <select
+                                        value={formData.unit}
+                                        onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                                        required
+                                    >
+                                        <option value="">-- Pilih Satuan --</option>
+                                        {(() => {
+                                            if (formData.conversion_code) {
+                                                const relatedConversions = unitConversions.filter(c => c.conversion_code === formData.conversion_code);
+                                                const relatedUnits = new Set();
+                                                relatedConversions.forEach(c => {
+                                                    relatedUnits.add(c.from_unit_code);
+                                                    relatedUnits.add(c.to_unit_code);
+                                                });
+                                                return units.filter(u => relatedUnits.has(u.code)).map(u => (
+                                                    <option key={u.id} value={u.code}>{u.code} - {u.name}</option>
+                                                ));
+                                            }
+                                            return units.map(u => (
+                                                <option key={u.id} value={u.code}>{u.code} - {u.name}</option>
+                                            ));
+                                        })()}
+                                    </select>
+                                </div>
                             </div>
                             <div className="form-row">
                                 <div className="form-group">
@@ -247,6 +292,7 @@ function ItemList() {
                                 <th>Brand</th>
                                 <th>Model</th>
                                 <th>Satuan</th>
+                                <th>Kode Konv.</th>
                                 <th style={{ textAlign: 'right' }}>Harga Beli</th>
                                 <th style={{ textAlign: 'right' }}>Harga Jual</th>
                                 <th style={{ textAlign: 'center' }}>Aksi</th>
@@ -269,6 +315,7 @@ function ItemList() {
                                         <td>{item.brand_name || '-'}</td>
                                         <td>{item.model_name || '-'}</td>
                                         <td><span className="badge badge-info">{item.unit}</span></td>
+                                        <td>{item.conversion_code ? <strong>{item.conversion_code}</strong> : '-'}</td>
                                         <td style={{ textAlign: 'right' }}>{formatCurrency(item.standard_cost)}</td>
                                         <td style={{ textAlign: 'right' }}>{formatCurrency(item.standard_price)}</td>
                                         <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>

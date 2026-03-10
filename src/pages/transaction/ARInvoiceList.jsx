@@ -14,6 +14,7 @@ function ARInvoiceList() {
     const [transcodes, setTranscodes] = useState([]);
     const [salesPersons, setSalesPersons] = useState([]);
     const [paymentTerms, setPaymentTerms] = useState([]);
+    const [allowedTops, setAllowedTops] = useState([]);
 
     // "sourceType": 'shipment' | 'manual'
     const [sourceType, setSourceType] = useState('shipment');
@@ -117,6 +118,27 @@ function ARInvoiceList() {
         }
     };
 
+    const handleCustomerChange = async (customerId) => {
+        setFormData(prev => ({ ...prev, partner_id: customerId, payment_term_id: '' }));
+        if (!customerId) {
+            setAllowedTops([]);
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/partners/${customerId}`);
+            const data = await response.json();
+            if (data.success && data.data && data.data.allowed_tops) {
+                setAllowedTops(data.data.allowed_tops);
+            } else {
+                setAllowedTops([]);
+            }
+        } catch (error) {
+            console.error('Error fetching partner allowed TOPs:', error);
+            setAllowedTops([]);
+        }
+    };
+
     const handleSelectShipment = async (shpId) => {
         if (!shpId) {
             setFormData(prev => ({
@@ -134,6 +156,17 @@ function ARInvoiceList() {
             if (data.success) {
                 const shp = data.data;
                 const shpDetails = shp.details || [];
+
+                // Fetch allowed tops for the customer in shipment
+                if (shp.partner_id) {
+                    const custRes = await fetch(`/api/partners/${shp.partner_id}`);
+                    const custData = await custRes.json();
+                    if (custData.success && custData.data && custData.data.allowed_tops) {
+                        setAllowedTops(custData.data.allowed_tops);
+                    } else {
+                        setAllowedTops([]);
+                    }
+                }
 
                 setFormData(prev => ({
                     ...prev,
@@ -229,6 +262,18 @@ function ARInvoiceList() {
                     payment_term_id: inv.payment_term_id || '',
                     currency_code: inv.currency_code || ''
                 });
+
+                // Also fetch allowed tops for the customer
+                if (inv.partner_id) {
+                    const custRes = await fetch(`/api/partners/${inv.partner_id}`);
+                    const custData = await custRes.json();
+                    if (custData.success && custData.data && custData.data.allowed_tops) {
+                        setAllowedTops(custData.data.allowed_tops);
+                    } else {
+                        setAllowedTops([]);
+                    }
+                }
+
                 setSourceType('manual');
                 setEditingItem(id);
                 setShowForm(true);
@@ -314,6 +359,7 @@ function ARInvoiceList() {
     const resetForm = () => {
         setEditingItem(null);
         setSourceType('shipment');
+        setAllowedTops([]);
         setFormData({
             doc_number: 'AUTO',
             doc_date: new Date().toISOString().split('T')[0],
@@ -335,7 +381,7 @@ function ARInvoiceList() {
         return new Date(date).toLocaleDateString('id-ID');
     };
 
-    
+
 
     const formatCurrency = (value) => {
         const code = formData.currency_code || 'IDR';
@@ -539,7 +585,7 @@ function ARInvoiceList() {
                                     <label>Customer</label>
                                     <select
                                         value={formData.partner_id}
-                                        onChange={(e) => setFormData({ ...formData, partner_id: e.target.value })}
+                                        onChange={(e) => handleCustomerChange(e.target.value)}
                                         required
                                         disabled={formData.shipment_id || formData.status !== 'Draft'}
                                     >
@@ -570,9 +616,12 @@ function ARInvoiceList() {
                                         disabled={formData.status !== 'Draft'}
                                     >
                                         <option value="">-- Pilih Term --</option>
-                                        {paymentTerms.map(pt => (
-                                            <option key={pt.id} value={pt.id}>{pt.code} - {pt.days} Hari</option>
-                                        ))}
+                                        {paymentTerms
+                                            .filter(pt => allowedTops.length === 0 || allowedTops.includes(pt.id))
+                                            .map(pt => (
+                                                <option key={pt.id} value={pt.id}>{pt.code} - {pt.days} Hari</option>
+                                            ))
+                                        }
                                     </select>
                                 </div>
                             </div>

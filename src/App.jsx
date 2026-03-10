@@ -9,6 +9,8 @@ import ItemModelList from './pages/master/ItemModelList';
 import PartnerList from './pages/master/PartnerList';
 import SalesPersonList from './pages/master/SalesPersonList';
 import UnitList from './pages/master/UnitList';
+import UnitConversionList from './pages/master/UnitConversionList';
+import SalesAreaList from './pages/master/SalesAreaList';
 import TranscodeList from './pages/master/TranscodeList';
 import TransactionList from './pages/master/TransactionList';
 import CoaList from './pages/master/CoaList';
@@ -48,6 +50,7 @@ import TrialBalanceReport from './pages/report/TrialBalanceReport';
 import ProfitLossReport from './pages/report/ProfitLossReport';
 import BalanceSheetReport from './pages/report/BalanceSheetReport';
 import GlSettings from './pages/settings/GlSettings';
+import SystemSettings from './pages/settings/SystemSettings';
 import SystemGeneratedJournalList from './pages/finance/SystemGeneratedJournalList';
 import CashList from './pages/finance/CashList';
 import BankList from './pages/finance/BankList';
@@ -138,6 +141,10 @@ function AppContent() {
                 return <ItemList />;
             case 'unit':
                 return <UnitList />;
+            case 'unit-conversion':
+                return <UnitConversionList />;
+            case 'sales-area':
+                return <SalesAreaList />;
             case 'supplier':
                 return <PartnerList type="Supplier" />;
             case 'customer':
@@ -212,6 +219,8 @@ function AppContent() {
                 return <JasperReports setCurrentPage={setCurrentPage} />;
             case 'gl-settings':
                 return <GlSettings />;
+            case 'system-settings':
+                return <SystemSettings />;
             case 'system-generated-journal':
                 return <SystemGeneratedJournalList />;
             case 'recalculate-inventory':

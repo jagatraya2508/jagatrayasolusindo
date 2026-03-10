@@ -11,6 +11,7 @@ function SalesOrderList() {
     const [customers, setCustomers] = useState([]);
     const [salesPersons, setSalesPersons] = useState([]);
     const [items, setItems] = useState([]);
+    const [unitConversions, setUnitConversions] = useState([]);
     const [formData, setFormData] = useState({
         doc_number: '',
         doc_date: new Date().toISOString().split('T')[0],
@@ -26,6 +27,7 @@ function SalesOrderList() {
     const [transcodes, setTranscodes] = useState([]);
     const [paymentTerms, setPaymentTerms] = useState([]);
     const [currencies, setcurrencies] = useState([]);
+    const [allowedTops, setAllowedTops] = useState([]);
 
     useEffect(() => {
         fetchData();
@@ -82,6 +84,13 @@ function SalesOrderList() {
             }
             if (topData.success) setPaymentTerms(topData.data.filter(t => t.active === 'Y'));
             if (rateData.success) setcurrencies(rateData.data);
+
+            // Fetch unit conversions
+            try {
+                const ucRes = await fetch('/api/unit-conversions');
+                const ucData = await ucRes.json();
+                if (ucData.success) setUnitConversions(ucData.data.filter(uc => uc.active === 'Y'));
+            } catch (err) { console.error('Error fetching unit conversions:', err); }
         } catch (error) {
             console.error('Error:', error);
         }
@@ -141,12 +150,47 @@ function SalesOrderList() {
         }
     };
 
+    const handleCustomerChange = async (customerId) => {
+        setFormData(prev => ({ ...prev, partner_id: customerId, payment_term_id: '' }));
+        if (!customerId) {
+            setAllowedTops([]);
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/partners/${customerId}`);
+            const data = await response.json();
+            if (data.success && data.data && data.data.allowed_tops) {
+                setAllowedTops(data.data.allowed_tops);
+            } else {
+                setAllowedTops([]);
+            }
+        } catch (error) {
+            console.error('Error fetching partner allowed TOPs:', error);
+            setAllowedTops([]);
+        }
+    };
+
     const handleEdit = async (id) => {
         try {
             const response = await fetch(`/api/sales-orders/${id}`);
             const data = await response.json();
             if (data.success) {
                 const so = data.data;
+
+                // Also fetch allowed tops for the customer
+                if (so.partner_id) {
+                    const custRes = await fetch(`/api/partners/${so.partner_id}`);
+                    const custData = await custRes.json();
+                    if (custData.success && custData.data && custData.data.allowed_tops) {
+                        setAllowedTops(custData.data.allowed_tops);
+                    } else {
+                        setAllowedTops([]);
+                    }
+                } else {
+                    setAllowedTops([]);
+                }
+
                 setFormData({
                     doc_number: so.doc_number,
                     doc_date: new Date(so.doc_date).toISOString().split('T')[0],
@@ -156,7 +200,9 @@ function SalesOrderList() {
                     details: so.details.map(d => ({
                         item_id: d.item_id,
                         quantity: parseFloat(d.quantity),
-                        unit_price: parseFloat(d.unit_price)
+                        unit_price: parseFloat(d.unit_price),
+                        unit_code: d.detail_unit_code || d.item_base_unit || '',
+                        conversion_factor: parseFloat(d.detail_conversion_factor) || 1
                     })),
                     transcode_id: so.transcode_id || '',
                     tax_type: so.tax_type || (so.ppn_included !== undefined ? (so.ppn_included ? 'Exclude' : 'No Tax') : 'Exclude'),
@@ -231,7 +277,7 @@ function SalesOrderList() {
     const addDetailLine = () => {
         setFormData({
             ...formData,
-            details: [...formData.details, { item_id: '', quantity: 1, unit_price: 0 }]
+            details: [...formData.details, { item_id: '', quantity: 1, unit_price: 0, unit_code: '', conversion_factor: 1 }]
         });
     };
 
@@ -244,11 +290,39 @@ function SalesOrderList() {
         const newDetails = [...formData.details];
         newDetails[index][field] = value;
 
-        // Auto-fill price from item
+        // Auto-fill price and unit from item
         if (field === 'item_id') {
             const item = items.find(i => i.id === parseInt(value));
             if (item) {
                 newDetails[index].unit_price = item.standard_price || 0;
+                newDetails[index].unit_code = item.unit || '';
+                newDetails[index].conversion_factor = 1;
+            }
+        }
+
+        // Handle unit change - update conversion factor
+        if (field === 'unit_code') {
+            const item = items.find(i => i.id === parseInt(newDetails[index].item_id));
+            const baseUnit = item?.unit || '';
+            if (value === baseUnit || !value) {
+                newDetails[index].conversion_factor = 1;
+            } else {
+                // Find conversion: from selected unit to base unit
+                const conv = unitConversions.find(uc =>
+                    (uc.from_unit_code === value && uc.to_unit_code === baseUnit) ||
+                    (uc.to_unit_code === value && uc.from_unit_code === baseUnit)
+                );
+                if (conv) {
+                    if (conv.from_unit_code === value) {
+                        // e.g., BOX -> PCS, factor = 12
+                        newDetails[index].conversion_factor = parseFloat(conv.conversion_factor);
+                    } else {
+                        // Reverse: PCS -> BOX, factor = 1/12
+                        newDetails[index].conversion_factor = 1 / parseFloat(conv.conversion_factor);
+                    }
+                } else {
+                    newDetails[index].conversion_factor = 1;
+                }
             }
         }
 
@@ -257,6 +331,7 @@ function SalesOrderList() {
 
     const resetForm = () => {
         setEditingItem(null);
+        setAllowedTops([]);
         setFormData({
             doc_number: '',
             doc_date: new Date().toISOString().split('T')[0],
@@ -271,7 +346,7 @@ function SalesOrderList() {
         });
     };
 
-    
+
 
     const formatCurrency = (value) => {
         const code = formData.currency_code || 'IDR';
@@ -414,8 +489,9 @@ function SalesOrderList() {
                                     <label>Customer</label>
                                     <select
                                         value={formData.partner_id}
-                                        onChange={(e) => setFormData({ ...formData, partner_id: e.target.value })}
+                                        onChange={(e) => handleCustomerChange(e.target.value)}
                                         required
+                                        disabled={formData.status === 'Approved'}
                                     >
                                         <option value="">-- Pilih Customer --</option>
                                         {customers.map(c => (
@@ -431,9 +507,12 @@ function SalesOrderList() {
                                         disabled={formData.status === 'Approved'}
                                     >
                                         <option value="">-- Pilih TOP --</option>
-                                        {paymentTerms.map(t => (
-                                            <option key={t.id} value={t.id}>{t.code} - {t.name} ({t.days} hari)</option>
-                                        ))}
+                                        {paymentTerms
+                                            .filter(t => allowedTops.length === 0 || allowedTops.includes(t.id))
+                                            .map(t => (
+                                                <option key={t.id} value={t.id}>{t.code} - {t.name} ({t.days} hari)</option>
+                                            ))
+                                        }
                                     </select>
                                 </div>
                                 <div className="form-group">
@@ -464,6 +543,7 @@ function SalesOrderList() {
                                         <tr>
                                             <th>Item</th>
                                             <th style={{ width: '100px' }}>Qty</th>
+                                            <th style={{ width: '120px' }}>Satuan</th>
                                             <th style={{ width: '150px' }}>Harga</th>
                                             <th style={{ width: '150px' }}>Total</th>
                                             <th style={{ width: '50px' }}></th>
@@ -496,16 +576,53 @@ function SalesOrderList() {
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                             <input
                                                                 type="number"
-                                                                min="1"
+                                                                min="0.01"
+                                                                step="0.01"
                                                                 value={detail.quantity}
                                                                 onChange={(e) => updateDetailLine(idx, 'quantity', parseFloat(e.target.value) || 0)}
                                                                 disabled={formData.status === 'Approved'}
                                                                 style={{ width: '80px' }}
                                                             />
-                                                            <span style={{ fontSize: '0.85rem', color: '#666' }}>
-                                                                {items.find(i => i.id === parseInt(detail.item_id))?.unit || '-'}
-                                                            </span>
                                                         </div>
+                                                    </td>
+                                                    <td>
+                                                        {(() => {
+                                                            const item = items.find(i => i.id === parseInt(detail.item_id));
+                                                            const baseUnit = item?.unit || '';
+                                                            const itemConversionCode = item?.conversion_code || '';
+                                                            // Get available units for this item
+                                                            const availableUnits = [baseUnit];
+
+                                                            unitConversions.forEach(uc => {
+                                                                // Only include conversions that match the item's conversion_code
+                                                                if (itemConversionCode && uc.conversion_code === itemConversionCode) {
+                                                                    if (uc.from_unit_code === baseUnit && !availableUnits.includes(uc.to_unit_code)) availableUnits.push(uc.to_unit_code);
+                                                                    if (uc.to_unit_code === baseUnit && !availableUnits.includes(uc.from_unit_code)) availableUnits.push(uc.from_unit_code);
+                                                                }
+                                                            });
+
+                                                            const convFactor = detail.conversion_factor || 1;
+                                                            const baseQty = detail.quantity * convFactor;
+                                                            return (
+                                                                <div>
+                                                                    <select
+                                                                        value={detail.unit_code || baseUnit}
+                                                                        onChange={(e) => updateDetailLine(idx, 'unit_code', e.target.value)}
+                                                                        disabled={formData.status === 'Approved'}
+                                                                        style={{ width: '100%', fontSize: '0.85rem' }}
+                                                                    >
+                                                                        {availableUnits.filter(Boolean).map(u => (
+                                                                            <option key={u} value={u}>{u}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                    {convFactor !== 1 && detail.quantity > 0 && (
+                                                                        <div style={{ fontSize: '0.75rem', color: '#059669', marginTop: '2px' }}>
+                                                                            = {baseQty} {baseUnit}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </td>
                                                     <td>
                                                         <input

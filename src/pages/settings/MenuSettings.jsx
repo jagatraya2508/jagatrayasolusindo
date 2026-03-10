@@ -11,12 +11,20 @@ const defaultMenuItems = [
         items: [
             { id: 'entity', label: 'Entity', icon: 'building' },
             { id: 'site', label: 'Site', icon: 'map-pin' },
-            { id: 'warehouse', label: 'Warehouse', icon: 'home' },
-            { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
-            { id: 'location', label: 'Location', icon: 'map' },
             { id: 'supplier', label: 'Supplier', icon: 'truck' },
             { id: 'customer', label: 'Customer', icon: 'users' },
             { id: 'salesperson', label: 'Sales Person', icon: 'user' },
+            {
+                id: 'wh-group',
+                label: 'Warehouse Group',
+                icon: 'home',
+                subItems: [
+                    { id: 'warehouse', label: 'Warehouse', icon: 'home' },
+                    { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
+                    { id: 'location', label: 'Location', icon: 'map' },
+                    { id: 'location-transfer', label: 'Pindah Gudang', icon: 'send' },
+                ]
+            },
             {
                 id: 'dist-master',
                 label: 'Distribution',
@@ -49,15 +57,7 @@ const defaultMenuItems = [
             { id: 'transaction', label: 'Transcode', icon: 'list' },
         ],
     },
-    {
-        section: 'Warehouse Group',
-        items: [
-            { id: 'warehouse', label: 'Warehouse', icon: 'home' },
-            { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
-            { id: 'location', label: 'Location', icon: 'map' },
-            { id: 'recalculate-inventory', label: 'Recalculate Stock', icon: 'rotate-cw' },
-        ],
-    },
+
     {
         section: 'Pembelian',
         items: [
@@ -116,6 +116,12 @@ const defaultMenuItems = [
             { id: 'ap-credit-adjustment', label: 'AP Credit Adj.', icon: 'file-plus' },
             { id: 'ar-debit-adjustment', label: 'AR Debit Adj.', icon: 'file-plus' },
             { id: 'ar-credit-adjustment', label: 'AR Credit Adj.', icon: 'file-minus' },
+        ],
+    },
+    {
+        section: 'Proses',
+        items: [
+            { id: 'recalculate-inventory', label: 'Recalculate Stock', icon: 'rotate-cw' },
         ],
     },
 ];

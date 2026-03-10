@@ -381,6 +381,45 @@ async function validatePeriod(date) {
   return result[0].count > 0;
 }
 
+async function validatePartnerFinancials(partnerId, newAmount, paymentTermId) {
+  const partners = await executeQuery("SELECT * FROM Partners WHERE id = ?", [partnerId]);
+  if (partners.length === 0) return { valid: true };
+
+  const partner = partners[0];
+  if (partner.type !== 'Customer') return { valid: true };
+
+  // 1. Check Credit Limit
+  if (parseFloat(partner.credit_limit) > 0) {
+    const arInvoices = await executeQuery("SELECT SUM(total_amount - COALESCE(paid_amount, 0)) as balance FROM ARInvoices WHERE partner_id = ? AND status != 'Cancelled' AND (total_amount - COALESCE(paid_amount, 0)) > 0", [partnerId]);
+    const currentBalance = parseFloat(arInvoices[0].balance) || 0;
+    if (currentBalance + newAmount > parseFloat(partner.credit_limit)) {
+      return { valid: false, error: `Batas credit limit terlampaui. Limit: ${partner.credit_limit}, Saldo Piutang: ${currentBalance}, Transaksi Baru: ${newAmount}` };
+    }
+  }
+
+  // 2. Check Overdue
+  if (partner.check_overdue === 'Y') {
+    const today = new Date().toISOString().split('T')[0];
+    const overdueInvoices = await executeQuery("SELECT count(*) as count FROM ARInvoices WHERE partner_id = ? AND status != 'Cancelled' AND (total_amount - COALESCE(paid_amount, 0)) > 0 AND due_date < ?", [partnerId, today]);
+    if (overdueInvoices[0].count > 0) {
+      return { valid: false, error: 'Customer memiliki piutang yang sudah melewati jatuh tempo (Overdue). Transaksi diblokir.' };
+    }
+  }
+
+  // 3. Check Allowed TOP
+  if (paymentTermId) {
+    const allowedTopsCount = await executeQuery("SELECT count(*) as count FROM PartnerPaymentTerms WHERE partner_id = ?", [partnerId]);
+    if (allowedTopsCount[0].count > 0) {
+      const isAllowed = await executeQuery("SELECT count(*) as count FROM PartnerPaymentTerms WHERE partner_id = ? AND payment_term_id = ?", [partnerId, paymentTermId]);
+      if (isAllowed[0].count === 0) {
+        return { valid: false, error: 'Tipe pembayaran (TOP) ini tidak diperbolehkan untuk customer ini.' };
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
 // ==================== ACCOUNTING PERIODS ====================
 app.get('/api/accounting-periods', async (req, res) => {
   try {
@@ -523,6 +562,305 @@ app.delete('/api/units/:id', async (req, res) => {
   try {
     await executeQuery('DELETE FROM Units WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Satuan berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== UNIT CONVERSIONS (KONVERSI SATUAN) ====================
+// Migration endpoint - create table
+app.get('/api/migrate/create-unit-conversions', async (req, res) => {
+  try {
+    // Create UnitConversions table
+    try {
+      await executeQuery(`
+        CREATE TABLE UnitConversions (
+          id INTEGER IDENTITY PRIMARY KEY,
+          conversion_code VARCHAR(50) NOT NULL,
+          from_unit_id INTEGER NOT NULL,
+          to_unit_id INTEGER NOT NULL,
+          conversion_factor DECIMAL(18,6) NOT NULL,
+          description VARCHAR(200),
+          active CHAR(1) DEFAULT 'Y',
+          FOREIGN KEY (from_unit_id) REFERENCES Units(id),
+          FOREIGN KEY (to_unit_id) REFERENCES Units(id)
+        )
+      `);
+    } catch (e) {
+      // Table might already exist, try to add the column instead
+      try {
+        await executeQuery(`ALTER TABLE UnitConversions ADD conversion_code VARCHAR(50) NULL`);
+      } catch (e2) { /* Column might exist */ }
+    }
+
+    // Add conversion_code to Items
+    try {
+      await executeQuery(`ALTER TABLE Items ADD conversion_code VARCHAR(50) NULL`);
+    } catch (e) { /* Column might exist */ }
+
+    // Add unit conversion columns to SalesOrderDetails
+    const colsToAdd = [
+      { name: 'unit_code', type: 'VARCHAR(20) NULL' },
+      { name: 'conversion_factor', type: 'DECIMAL(18,6) DEFAULT 1' },
+      { name: 'base_qty', type: 'DECIMAL(18,6) NULL' }
+    ];
+    for (const col of colsToAdd) {
+      try {
+        await executeQuery(`ALTER TABLE SalesOrderDetails ADD ${col.name} ${col.type}`);
+      } catch (e) { /* column might already exist */ }
+    }
+
+    // Add same columns to PurchaseOrderDetails
+    for (const col of colsToAdd) {
+      try {
+        await executeQuery(`ALTER TABLE PurchaseOrderDetails ADD ${col.name} ${col.type}`);
+      } catch (e) { /* column might already exist */ }
+    }
+
+    res.json({ success: true, message: 'Migration unit conversions berhasil' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== SALES AREAS (MASTER WILAYAH PENJUALAN) ====================
+// Migration endpoint - create table
+app.get('/api/migrate/create-sales-areas', async (req, res) => {
+  try {
+    // Create SalesAreas table
+    try {
+      await executeQuery(`
+        CREATE TABLE SalesAreas (
+          id INTEGER IDENTITY PRIMARY KEY,
+          code VARCHAR(50) NOT NULL UNIQUE,
+          name VARCHAR(100) NOT NULL,
+          level VARCHAR(20) NOT NULL,
+          parent_id INTEGER NULL,
+          active CHAR(1) DEFAULT 'Y',
+          FOREIGN KEY (parent_id) REFERENCES SalesAreas(id)
+        )
+      `);
+    } catch (e) {
+      /* Table might already exist */
+    }
+
+    // Add sales_area_id to SalesPersons
+    try {
+      await executeQuery(`ALTER TABLE SalesPersons ADD sales_area_id INTEGER NULL`);
+    } catch (e) {
+      /* Column might exist */
+    }
+
+    // NOTE: SQLite/Sybase standard might differ on adding FK constraint later. 
+    // Usually adding column is enough, the relation might be enforced in app level if FK fails.
+
+    res.json({ success: true, message: 'Tabel SalesAreas dan kolom sales_area_id pada SalesPersons berhasil ditambahkan (atau sudah ada)' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET all sales areas with parent name
+app.get('/api/sales-areas', async (req, res) => {
+  try {
+    const result = await executeQuery(`
+      SELECT sa.*, parent.name as parent_name 
+      FROM SalesAreas sa
+      LEFT JOIN SalesAreas parent ON sa.parent_id = parent.id
+      ORDER BY sa.level, sa.name
+    `);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/sales-areas', async (req, res) => {
+  try {
+    const { code, name, level, parent_id, active } = req.body;
+
+    // Check if code exists
+    const existing = await executeQuery('SELECT id FROM SalesAreas WHERE code = ?', [code]);
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Kode Area sudah digunakan' });
+    }
+
+    await executeQuery(
+      'INSERT INTO SalesAreas (code, name, level, parent_id, active) VALUES (?, ?, ?, ?, ?)',
+      [code, name, level, parent_id || null, active || 'Y']
+    );
+    res.json({ success: true, message: 'Sales Area berhasil ditambahkan' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/sales-areas/:id', async (req, res) => {
+  try {
+    const { code, name, level, parent_id, active } = req.body;
+
+    // Check if code exists for other areas
+    const existing = await executeQuery('SELECT id FROM SalesAreas WHERE code = ? AND id != ?', [code, req.params.id]);
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Kode Area sudah digunakan' });
+    }
+
+    await executeQuery(
+      'UPDATE SalesAreas SET code = ?, name = ?, level = ?, parent_id = ?, active = ? WHERE id = ?',
+      [code, name, level, parent_id || null, active || 'Y', req.params.id]
+    );
+    res.json({ success: true, message: 'Sales Area berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/sales-areas/:id', async (req, res) => {
+  try {
+    // Check if it has children
+    const children = await executeQuery('SELECT id FROM SalesAreas WHERE parent_id = ?', [req.params.id]);
+    if (children.length > 0) {
+      return res.status(400).json({ success: false, error: 'Tidak dapat menghapus area ini karena memiliki sub-area' });
+    }
+
+    // Check if it's used in SalesPersons
+    const usedInSalesPersons = await executeQuery('SELECT id FROM SalesPersons WHERE sales_area_id = ?', [req.params.id]);
+    if (usedInSalesPersons.length > 0) {
+      return res.status(400).json({ success: false, error: 'Tidak dapat menghapus area ini karena sedang digunakan oleh Sales Person' });
+    }
+
+    await executeQuery('DELETE FROM SalesAreas WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Sales Area berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// List all conversions
+app.get('/api/unit-conversions', async (req, res) => {
+  try {
+    const result = await executeQuery(`
+      SELECT uc.*, 
+        fu.code as from_unit_code, fu.name as from_unit_name,
+        tu.code as to_unit_code, tu.name as to_unit_name
+      FROM UnitConversions uc
+      LEFT JOIN Units fu ON uc.from_unit_id = fu.id
+      LEFT JOIN Units tu ON uc.to_unit_id = tu.id
+      ORDER BY fu.code, tu.code
+    `);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get conversions available for a specific unit code (used in transaction forms)
+app.get('/api/unit-conversions/by-unit/:unitCode', async (req, res) => {
+  try {
+    const unitCode = req.params.unitCode;
+    // Get conversions where this unit is either the from or to unit
+    const result = await executeQuery(`
+      SELECT uc.*, 
+        fu.code as from_unit_code, fu.name as from_unit_name,
+        tu.code as to_unit_code, tu.name as to_unit_name
+      FROM UnitConversions uc
+      LEFT JOIN Units fu ON uc.from_unit_id = fu.id
+      LEFT JOIN Units tu ON uc.to_unit_id = tu.id
+      WHERE (fu.code = ? OR tu.code = ?) AND uc.active = 'Y'
+      ORDER BY fu.code, tu.code
+    `, [unitCode, unitCode]);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get single conversion
+app.get('/api/unit-conversions/:id', async (req, res) => {
+  try {
+    const result = await executeQuery(`
+      SELECT uc.*, 
+        fu.code as from_unit_code, fu.name as from_unit_name,
+        tu.code as to_unit_code, tu.name as to_unit_name
+      FROM UnitConversions uc
+      LEFT JOIN Units fu ON uc.from_unit_id = fu.id
+      LEFT JOIN Units tu ON uc.to_unit_id = tu.id
+      WHERE uc.id = ?
+    `, [req.params.id]);
+    res.json({ success: true, data: result[0] || null });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create conversion
+app.post('/api/unit-conversions', async (req, res) => {
+  try {
+    const { conversion_code, from_unit_id, to_unit_id, conversion_factor, description, active } = req.body;
+
+    if (!conversion_code || conversion_code.trim() === '') {
+      return res.status(400).json({ success: false, error: 'Kode Konversi harus diisi' });
+    }
+
+    const fromId = parseInt(from_unit_id);
+    const toId = parseInt(to_unit_id);
+    const factor = parseFloat(conversion_factor);
+
+    if (fromId === toId) {
+      return res.status(400).json({ success: false, error: 'Satuan asal dan tujuan tidak boleh sama' });
+    }
+
+    // Check for duplicate
+    const existing = await executeQuery(
+      'SELECT id FROM UnitConversions WHERE conversion_code = ? AND from_unit_id = ? AND to_unit_id = ?',
+      [conversion_code.toUpperCase(), fromId, toId]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Konversi untuk pasangan satuan ini sudah ada' });
+    }
+
+    await executeQuery(
+      'INSERT INTO UnitConversions (conversion_code, from_unit_id, to_unit_id, conversion_factor, description, active) VALUES (?, ?, ?, ?, ?, ?)',
+      [conversion_code.toUpperCase(), fromId, toId, factor, description || '', active || 'Y']
+    );
+    res.json({ success: true, message: 'Konversi satuan berhasil ditambahkan' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update conversion
+app.put('/api/unit-conversions/:id', async (req, res) => {
+  try {
+    const { conversion_code, from_unit_id, to_unit_id, conversion_factor, description, active } = req.body;
+
+    if (!conversion_code || conversion_code.trim() === '') {
+      return res.status(400).json({ success: false, error: 'Kode Konversi harus diisi' });
+    }
+
+    const fromId = parseInt(from_unit_id);
+    const toId = parseInt(to_unit_id);
+    const factor = parseFloat(conversion_factor);
+
+    if (fromId === toId) {
+      return res.status(400).json({ success: false, error: 'Satuan asal dan tujuan tidak boleh sama' });
+    }
+
+    await executeQuery(
+      'UPDATE UnitConversions SET conversion_code = ?, from_unit_id = ?, to_unit_id = ?, conversion_factor = ?, description = ?, active = ? WHERE id = ?',
+      [conversion_code.toUpperCase(), fromId, toId, factor, description, active, parseInt(req.params.id)]
+    );
+    res.json({ success: true, message: 'Konversi satuan berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete conversion
+app.delete('/api/unit-conversions/:id', async (req, res) => {
+  try {
+    await executeQuery('DELETE FROM UnitConversions WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Konversi satuan berhasil dihapus' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1295,10 +1633,41 @@ app.get('/api/items/:id', async (req, res) => {
 
 app.post('/api/items', async (req, res) => {
   try {
-    const { code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id } = req.body;
+    let { code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id, conversion_code } = req.body;
+
+    // Auto Generate Item Code
+    const modeSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_MODE'");
+    if (modeSetting.length > 0 && modeSetting[0].setting_value === 'AUTO') {
+      const formatSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_FORMAT'");
+      const seqSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_SEQ'");
+
+      const format = (formatSetting.length > 0 && formatSetting[0].setting_value) ? formatSetting[0].setting_value : 'ITM-{YY}{MM}-{SEQ}';
+      const currentSeq = parseInt((seqSetting.length > 0 && seqSetting[0].setting_value) ? seqSetting[0].setting_value : '0', 10);
+      const nextSeq = currentSeq + 1;
+
+      const now = new Date();
+      const year = now.getFullYear().toString();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const seqStr = String(nextSeq).padStart(4, '0');
+
+      code = format
+        .replace('{YYYY}', year)
+        .replace('{YY}', year.slice(-2))
+        .replace('{MM}', month)
+        .replace('{DD}', day)
+        .replace('{SEQ}', seqStr);
+
+      if (seqSetting.length > 0) {
+        await executeQuery("UPDATE SystemSettings SET setting_value = ? WHERE setting_key = 'ITEM_ID_SEQ'", [nextSeq.toString()]);
+      } else {
+        await executeQuery("INSERT INTO SystemSettings (setting_key, setting_value) VALUES ('ITEM_ID_SEQ', ?)", [nextSeq.toString()]);
+      }
+    }
+
     await executeQuery(
-      'INSERT INTO Items (code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [code, name, unit || '', standard_cost || 0, standard_price || 0, group_id || null, category_id || null, brand_id || null, model_id || null]
+      'INSERT INTO Items (code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id, conversion_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [code, name, unit || '', standard_cost || 0, standard_price || 0, group_id || null, category_id || null, brand_id || null, model_id || null, conversion_code || null]
     );
     const result = await executeQuery('SELECT * FROM Items WHERE code = ?', [code]);
     res.json({ success: true, data: result[0], message: 'Item berhasil ditambahkan' });
@@ -1309,10 +1678,10 @@ app.post('/api/items', async (req, res) => {
 
 app.put('/api/items/:id', async (req, res) => {
   try {
-    const { code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id } = req.body;
+    const { code, name, unit, standard_cost, standard_price, group_id, category_id, brand_id, model_id, conversion_code } = req.body;
     await executeQuery(
-      'UPDATE Items SET code = ?, name = ?, unit = ?, standard_cost = ?, standard_price = ?, group_id = ?, category_id = ?, brand_id = ?, model_id = ? WHERE id = ?',
-      [code, name, unit, standard_cost, standard_price, group_id || null, category_id || null, brand_id || null, model_id || null, req.params.id]
+      'UPDATE Items SET code = ?, name = ?, unit = ?, standard_cost = ?, standard_price = ?, group_id = ?, category_id = ?, brand_id = ?, model_id = ?, conversion_code = ? WHERE id = ?',
+      [code, name, unit, standard_cost, standard_price, group_id || null, category_id || null, brand_id || null, model_id || null, conversion_code || null, req.params.id]
     );
     res.json({ success: true, message: 'Item berhasil diupdate' });
   } catch (error) {
@@ -1324,6 +1693,37 @@ app.delete('/api/items/:id', async (req, res) => {
   try {
     await executeQuery('DELETE FROM Items WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Item berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== SYSTEM SETTINGS ====================
+app.get('/api/system-settings', async (req, res) => {
+  try {
+    const result = await executeQuery('SELECT * FROM SystemSettings');
+    const settings = {};
+    result.forEach(row => {
+      settings[row.setting_key] = row.setting_value;
+    });
+    res.json({ success: true, data: settings });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/system-settings', async (req, res) => {
+  try {
+    const settings = req.body;
+    for (const [key, value] of Object.entries(settings)) {
+      const exists = await executeQuery('SELECT count(*) as count FROM SystemSettings WHERE setting_key = ?', [key]);
+      if (exists[0].count > 0) {
+        await executeQuery('UPDATE SystemSettings SET setting_value = ? WHERE setting_key = ?', [value, key]);
+      } else {
+        await executeQuery('INSERT INTO SystemSettings (setting_key, setting_value) VALUES (?, ?)', [key, value]);
+      }
+    }
+    res.json({ success: true, message: 'Settings updated successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1347,10 +1747,26 @@ app.get('/api/partners', async (req, res) => {
   }
 });
 
+// ==================== PAYMENT TERMS ====================
+app.get('/api/payment-terms', async (req, res) => {
+  try {
+    const result = await executeQuery('SELECT * FROM PaymentTerms WHERE active = 1 ORDER BY code');
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/partners/:id', async (req, res) => {
   try {
     const result = await executeQuery('SELECT * FROM Partners WHERE id = ?', [req.params.id]);
-    res.json({ success: true, data: result[0] || null });
+    if (!result[0]) return res.json({ success: true, data: null });
+
+    // Get allowed TOPs
+    const topResult = await executeQuery('SELECT payment_term_id FROM PartnerPaymentTerms WHERE partner_id = ?', [req.params.id]);
+    const allowed_tops = topResult.map(row => row.payment_term_id);
+
+    res.json({ success: true, data: { ...result[0], allowed_tops } });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1358,25 +1774,90 @@ app.get('/api/partners/:id', async (req, res) => {
 
 app.post('/api/partners', async (req, res) => {
   try {
-    const { code, name, type, address, phone } = req.body;
+    let { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops } = req.body;
+
+    // Check if Auto Generate is needed
+    if (type === 'Customer' || type === 'Supplier') {
+      const modeKey = type === 'Customer' ? 'CUSTOMER_ID_MODE' : 'SUPPLIER_ID_MODE';
+      const formatKey = type === 'Customer' ? 'CUSTOMER_ID_FORMAT' : 'SUPPLIER_ID_FORMAT';
+      const seqKey = type === 'Customer' ? 'CUSTOMER_ID_SEQ' : 'SUPPLIER_ID_SEQ';
+
+      const settingsRows = await executeQuery(`SELECT setting_key, setting_value FROM SystemSettings WHERE setting_key IN ('${modeKey}', '${formatKey}', '${seqKey}')`);
+
+      const settingsMap = {};
+      settingsRows.forEach(row => {
+        settingsMap[row.setting_key] = row.setting_value;
+      });
+
+      if (settingsMap[modeKey] === 'AUTO') {
+        const defaultFormat = type === 'Customer' ? 'CUS-{YY}{MM}-{SEQ}' : 'SUP-{YY}{MM}-{SEQ}';
+        const format = settingsMap[formatKey] || defaultFormat;
+
+        const currentSeq = parseInt(settingsMap[seqKey] || '0', 10);
+        const nextSeq = currentSeq + 1;
+
+        const now = new Date();
+        const year = now.getFullYear().toString();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const seqStr = String(nextSeq).padStart(4, '0');
+
+        code = format
+          .replace('{YYYY}', year)
+          .replace('{YY}', year.slice(-2))
+          .replace('{MM}', month)
+          .replace('{DD}', day)
+          .replace('{SEQ}', seqStr);
+
+        // Update sequence
+        if (settingsMap[seqKey] !== undefined) {
+          console.log(`Updating SystemSettings seq: ${nextSeq.toString()} for key ${seqKey}`);
+          await executeQuery('UPDATE SystemSettings SET setting_value = ? WHERE setting_key = ?', [nextSeq.toString(), seqKey]);
+        } else {
+          console.log(`Inserting SystemSettings seq: ${nextSeq.toString()} for key ${seqKey}`);
+          await executeQuery('INSERT INTO SystemSettings (setting_key, setting_value) VALUES (?, ?)', [seqKey, nextSeq.toString()]);
+        }
+
+      }
+    }
+
+    console.log(`Inserting into Partners: code=${code}, name=${name}, type=${type}, address=${address}, phone=${phone}, credit_limit=${credit_limit}, check_overdue=${check_overdue}`);
     await executeQuery(
-      'INSERT INTO Partners (code, name, type, address, phone) VALUES (?, ?, ?, ?, ?)',
-      [code, name, type, address || '', phone || '']
+      'INSERT INTO Partners (code, name, type, address, phone, credit_limit, check_overdue) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [code, name, type, address || '', phone || '', credit_limit || 0, check_overdue || 'N']
     );
+    console.log(`Insert successful!`);
     const result = await executeQuery('SELECT * FROM Partners WHERE code = ?', [code]);
+
+    if (result && result[0] && allowed_tops && Array.isArray(allowed_tops)) {
+      const pId = result[0].id;
+      for (const topId of allowed_tops) {
+        await executeQuery('INSERT INTO PartnerPaymentTerms (partner_id, payment_term_id) VALUES (?, ?)', [pId, topId]);
+      }
+    }
     res.json({ success: true, data: result[0], message: 'Partner berhasil ditambahkan' });
   } catch (error) {
+    const fs = require('fs');
+    fs.writeFileSync('partner_error.log', JSON.stringify(error, Object.getOwnPropertyNames(error), 2) + '\n\nCode was: ' + code);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.put('/api/partners/:id', async (req, res) => {
   try {
-    const { code, name, type, address, phone } = req.body;
+    const { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops } = req.body;
     await executeQuery(
-      'UPDATE Partners SET code = ?, name = ?, type = ?, address = ?, phone = ? WHERE id = ?',
-      [code, name, type, address, phone, req.params.id]
+      'UPDATE Partners SET code = ?, name = ?, type = ?, address = ?, phone = ?, credit_limit = ?, check_overdue = ? WHERE id = ?',
+      [code, name, type, address, phone, credit_limit || 0, check_overdue || 'N', req.params.id]
     );
+
+    await executeQuery('DELETE FROM PartnerPaymentTerms WHERE partner_id = ?', [req.params.id]);
+    if (allowed_tops && Array.isArray(allowed_tops)) {
+      for (const topId of allowed_tops) {
+        await executeQuery('INSERT INTO PartnerPaymentTerms (partner_id, payment_term_id) VALUES (?, ?)', [req.params.id, topId]);
+      }
+    }
+
     res.json({ success: true, message: 'Partner berhasil diupdate' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1646,7 +2127,12 @@ app.put('/api/receivings/:id/approve', async (req, res) => {
 // ==================== SALESPERSONS ====================
 app.get('/api/salespersons', async (req, res) => {
   try {
-    const result = await executeQuery('SELECT * FROM SalesPersons ORDER BY code');
+    const result = await executeQuery(`
+      SELECT sp.*, sa.name as sales_area_name 
+      FROM SalesPersons sp
+      LEFT JOIN SalesAreas sa ON sp.sales_area_id = sa.id
+      ORDER BY sp.code
+    `);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1655,10 +2141,10 @@ app.get('/api/salespersons', async (req, res) => {
 
 app.post('/api/salespersons', async (req, res) => {
   try {
-    const { code, name, phone, email } = req.body;
+    const { code, name, phone, email, sales_area_id } = req.body;
     await executeQuery(
-      'INSERT INTO SalesPersons (code, name, phone, email) VALUES (?, ?, ?, ?)',
-      [code, name, phone || '', email || '']
+      'INSERT INTO SalesPersons (code, name, phone, email, sales_area_id) VALUES (?, ?, ?, ?, ?)',
+      [code, name, phone || '', email || '', sales_area_id || null]
     );
     const result = await executeQuery('SELECT * FROM SalesPersons WHERE code = ?', [code]);
     res.json({ success: true, data: result[0], message: 'Sales Person berhasil ditambahkan' });
@@ -1669,10 +2155,10 @@ app.post('/api/salespersons', async (req, res) => {
 
 app.put('/api/salespersons/:id', async (req, res) => {
   try {
-    const { code, name, phone, email, active } = req.body;
+    const { code, name, phone, email, active, sales_area_id } = req.body;
     await executeQuery(
-      'UPDATE SalesPersons SET code = ?, name = ?, phone = ?, email = ?, active = ? WHERE id = ?',
-      [code, name, phone, email, active || 'Y', req.params.id]
+      'UPDATE SalesPersons SET code = ?, name = ?, phone = ?, email = ?, active = ?, sales_area_id = ? WHERE id = ?',
+      [code, name, phone, email, active || 'Y', sales_area_id || null, req.params.id]
     );
     res.json({ success: true, message: 'Sales Person berhasil diupdate' });
   } catch (error) {
@@ -2683,7 +3169,8 @@ app.get('/api/sales-orders/:id', async (req, res) => {
     `, [req.params.id]);
 
     const details = await executeQuery(`
-      SELECT d.*, i.code as item_code, i.name as item_name, i.unit as unit_code,
+      SELECT d.*, i.code as item_code, i.name as item_name, i.unit as item_base_unit,
+      d.unit_code as detail_unit_code, d.conversion_factor as detail_conversion_factor, d.base_qty,
       (
         SELECT COALESCE(SUM(sd.quantity), 0)
         FROM ShipmentDetails sd
@@ -2706,6 +3193,13 @@ app.post('/api/sales-orders', async (req, res) => {
     const { doc_number, doc_date, partner_id, salesperson_id, status, details, transcode_id, payment_term_id, tax_type, currency_code } = req.body;
     const total = details?.reduce((sum, d) => sum + (d.quantity * d.unit_price), 0) || 0;
 
+    // Validate Financial Limits
+    const financialValid = await validatePartnerFinancials(partner_id, total, payment_term_id);
+    if (!financialValid.valid) {
+      return res.status(400).json({ success: false, error: financialValid.error });
+    }
+
+
     await executeQuery(
       'INSERT INTO SalesOrders (doc_number, doc_date, partner_id, sales_person_id, status, total_amount, transcode_id, payment_term_id, tax_type, currency_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [doc_number, doc_date, partner_id, salesperson_id, status || 'Draft', total, transcode_id || null, payment_term_id || null, tax_type || 'Exclude', currency_code || null]
@@ -2716,9 +3210,11 @@ app.post('/api/sales-orders', async (req, res) => {
 
     if (details && details.length > 0 && soId) {
       for (const d of details) {
+        const convFactor = parseFloat(d.conversion_factor) || 1;
+        const baseQty = d.quantity * convFactor;
         await executeQuery(
-          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-          [soId, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price]
+          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [soId, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price, d.unit_code || null, convFactor, baseQty]
         );
       }
     }
@@ -2742,9 +3238,11 @@ app.put('/api/sales-orders/:id', async (req, res) => {
     await executeQuery('DELETE FROM SalesOrderDetails WHERE so_id = ?', [req.params.id]);
     if (details && details.length > 0) {
       for (const d of details) {
+        const convFactor = parseFloat(d.conversion_factor) || 1;
+        const baseQty = d.quantity * convFactor;
         await executeQuery(
-          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total) VALUES (?, ?, ?, ?, ?)',
-          [req.params.id, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price]
+          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [req.params.id, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price, d.unit_code || null, convFactor, baseQty]
         );
       }
     }
@@ -3306,6 +3804,13 @@ app.get('/api/ar-invoices', async (req, res) => {
 app.post('/api/ar-invoices', async (req, res) => {
   try {
     const { doc_number, doc_date, due_date, partner_id, shipment_id, total_amount, status, notes, transcode_id, tax_type, items, sales_person_id, payment_term_id, currency_code } = req.body;
+
+    // Validate Financial Limits
+    const financialValid = await validatePartnerFinancials(partner_id, total_amount || 0, payment_term_id);
+    if (!financialValid.valid) {
+      return res.status(400).json({ success: false, error: financialValid.error });
+    }
+
 
     console.log('AR Invoice POST - Request body:', JSON.stringify(req.body, null, 2));
 

@@ -30,12 +30,21 @@ export const menuItems = [
         items: [
             { id: 'entity', label: 'Entity', icon: 'building' },
             { id: 'site', label: 'Site', icon: 'map-pin' },
-            { id: 'warehouse', label: 'Warehouse', icon: 'home' },
-            { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
-            { id: 'location', label: 'Location', icon: 'map' },
             { id: 'supplier', label: 'Supplier', icon: 'truck' },
             { id: 'customer', label: 'Customer', icon: 'users' },
             { id: 'salesperson', label: 'Sales Person', icon: 'user' },
+            { id: 'sales-area', label: 'Sales Area', icon: 'map' },
+            {
+                id: 'wh-group',
+                label: 'Warehouse Group',
+                icon: 'home',
+                subItems: [
+                    { id: 'warehouse', label: 'Warehouse', icon: 'home' },
+                    { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
+                    { id: 'location', label: 'Location', icon: 'map' },
+                    { id: 'location-transfer', label: 'Pindah Gudang', icon: 'send' },
+                ]
+            },
             {
                 id: 'dist-master',
                 label: 'Distribution',
@@ -47,6 +56,7 @@ export const menuItems = [
                     { id: 'item-model', label: 'Item Model', icon: 'cpu' },
                     { id: 'item', label: 'Master Item', icon: 'package' },
                     { id: 'unit', label: 'Satuan', icon: 'ruler' },
+                    { id: 'unit-conversion', label: 'Konversi Satuan', icon: 'repeat' },
                 ]
             },
             {
@@ -68,16 +78,7 @@ export const menuItems = [
             { id: 'transaction', label: 'Transcode', icon: 'list' },
         ],
     },
-    {
-        section: 'Warehouse Group',
-        items: [
-            { id: 'warehouse', label: 'Warehouse', icon: 'home' },
-            { id: 'sub-warehouse', label: 'Sub Warehouse', icon: 'box' },
-            { id: 'location', label: 'Location', icon: 'map' },
-            { id: 'location-transfer', label: 'Pindah Gudang', icon: 'send' },
-            { id: 'recalculate-inventory', label: 'Recalculate Stock', icon: 'rotate-cw' },
-        ],
-    },
+
     {
         section: 'Pembelian',
         items: [
@@ -106,6 +107,12 @@ export const menuItems = [
             { id: 'ap-credit-adjustment', label: 'AP Credit Adj.', icon: 'file-plus' },
             { id: 'ar-debit-adjustment', label: 'AR Debit Adj.', icon: 'file-plus' },
             { id: 'ar-credit-adjustment', label: 'AR Credit Adj.', icon: 'file-minus' },
+        ],
+    },
+    {
+        section: 'Proses',
+        items: [
+            { id: 'recalculate-inventory', label: 'Recalculate Stock', icon: 'rotate-cw' },
         ],
     },
     {
@@ -593,6 +600,9 @@ function Sidebar({ currentPage, setCurrentPage }) {
                             )}
                             <div className={`nav-item ${currentPage === 'menu-settings' ? 'active' : ''}`} onClick={() => setCurrentPage('menu-settings')}>
                                 {icons['settings']} <span>Pengaturan Menu</span>
+                            </div>
+                            <div className={`nav-item ${currentPage === 'system-settings' ? 'active' : ''}`} onClick={() => setCurrentPage('system-settings')}>
+                                {icons['settings']} <span>Sistem Settings</span>
                             </div>
                             <div className={`nav-item ${currentPage === 'accounting-period' ? 'active' : ''}`} onClick={() => setCurrentPage('accounting-period')}>
                                 {icons['calendar']} <span>Periode Akuntansi</span>
