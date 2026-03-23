@@ -15,7 +15,7 @@ function CrmQuotationList() {
         quotation_date: new Date().toISOString().substring(0, 10), valid_until: '',
         subtotal: 0, discount_pct: 0, discount_amount: 0, tax_pct: 11, tax_amount: 0,
         total: 0, currency_code: 'IDR', status: 'Draft', notes: '',
-        items: [{ item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }]
+        items: [{ item_id: '', item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }]
     };
     const [formData, setFormData] = useState(initialFormData);
     const [opportunities, setOpportunities] = useState([]);
@@ -23,7 +23,19 @@ function CrmQuotationList() {
     const statusOptions = ['Draft', 'Sent', 'Accepted', 'Rejected'];
     const statusColors = { Draft: '#6b7280', Sent: '#3182ce', Accepted: '#38a169', Rejected: '#e53e3e' };
 
-    useEffect(() => { fetchData(); fetchOpportunities(); }, [filterStatus]);
+    const [masterItems, setMasterItems] = useState([]);
+
+    useEffect(() => { fetchData(); fetchOpportunities(); fetchMasterItems(); }, [filterStatus]);
+
+    const fetchMasterItems = async () => {
+        try {
+            const response = await fetch('/api/items');
+            const data = await response.json();
+            if (data.success) {
+                setMasterItems(data.data.filter(i => i.active !== 'N'));
+            }
+        } catch (error) { console.error('Error fetching master items:', error); }
+    };
 
     const getToken = () => localStorage.getItem('token');
 
@@ -64,10 +76,10 @@ function CrmQuotationList() {
                     tax_pct: q.tax_pct || 0, tax_amount: q.tax_amount || 0, total: q.total || 0,
                     currency_code: q.currency_code || 'IDR', status: q.status || 'Draft', notes: q.notes || '',
                     items: (q.items && q.items.length > 0) ? q.items.map(i => ({
-                        item_code: i.item_code || '', description: i.description || '', qty: i.qty || 1,
+                        item_id: i.item_id || '', item_code: i.item_code || '', description: i.description || '', qty: i.qty || 1,
                         unit: i.unit || '', unit_price: i.unit_price || 0, discount_pct: i.discount_pct || 0,
                         total_price: i.total_price || 0
-                    })) : [{ item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }]
+                    })) : [{ item_id: '', item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }]
                 });
                 setShowForm(true);
             }
@@ -85,7 +97,21 @@ function CrmQuotationList() {
 
     const updateItem = (index, field, value) => {
         const newItems = [...formData.items];
-        newItems[index] = { ...newItems[index], [field]: value };
+        
+        if (field === 'item_id') {
+            const selectedItem = masterItems.find(i => String(i.id) === String(value));
+            newItems[index] = {
+                ...newItems[index],
+                item_id: value,
+                item_code: selectedItem ? selectedItem.code : '',
+                description: selectedItem ? selectedItem.name : '',
+                unit: selectedItem ? selectedItem.unit : '',
+                unit_price: selectedItem ? (selectedItem.standard_price || 0) : 0,
+            };
+        } else {
+            newItems[index] = { ...newItems[index], [field]: value };
+        }
+        
         // Recalculate item total
         const qty = parseFloat(newItems[index].qty || 0);
         const unitPrice = parseFloat(newItems[index].unit_price || 0);
@@ -96,7 +122,7 @@ function CrmQuotationList() {
     };
 
     const addItem = () => {
-        setFormData({ ...formData, items: [...formData.items, { item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }] });
+        setFormData({ ...formData, items: [...formData.items, { item_id: '', item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }] });
     };
 
     const removeItem = (index) => {
@@ -202,12 +228,13 @@ function CrmQuotationList() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#f3f4f6' }}>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '30%' }}>Deskripsi</th>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '10%' }}>Qty</th>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '10%' }}>Satuan</th>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '18%' }}>Harga Satuan</th>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '10%' }}>Disc %</th>
-                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '18%' }}>Total</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '20%' }}>Item (Opsional)</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '25%' }}>Deskripsi</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '8%' }}>Qty</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '8%' }}>Satuan</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '15%' }}>Harga Satuan</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '8%' }}>Disc %</th>
+                                            <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '12%' }}>Total</th>
                                             <th style={{ padding: '0.5rem', border: '1px solid #d1d5db', width: '4%' }}></th>
                                         </tr>
                                     </thead>
@@ -215,7 +242,19 @@ function CrmQuotationList() {
                                         {formData.items.map((item, idx) => (
                                             <tr key={idx}>
                                                 <td style={{ padding: '0.3rem', border: '1px solid #d1d5db' }}>
-                                                    <input type="text" value={item.description} onChange={(e) => updateItem(idx, 'description', e.target.value)} style={{ width: '100%', padding: '0.3rem', border: '1px solid #e5e7eb', borderRadius: '4px' }} />
+                                                    <select
+                                                        value={item.item_id || ''}
+                                                        onChange={(e) => updateItem(idx, 'item_id', e.target.value)}
+                                                        style={{ width: '100%', padding: '0.3rem', border: '1px solid #e5e7eb', borderRadius: '4px' }}
+                                                    >
+                                                        <option value="">-- Manual --</option>
+                                                        {masterItems.map(mi => (
+                                                            <option key={mi.id} value={mi.id}>{mi.code} - {mi.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </td>
+                                                <td style={{ padding: '0.3rem', border: '1px solid #d1d5db' }}>
+                                                    <input type="text" value={item.description} onChange={(e) => updateItem(idx, 'description', e.target.value)} style={{ width: '100%', padding: '0.3rem', border: '1px solid #e5e7eb', borderRadius: '4px' }} required />
                                                 </td>
                                                 <td style={{ padding: '0.3rem', border: '1px solid #d1d5db' }}>
                                                     <input type="number" value={item.qty} onChange={(e) => updateItem(idx, 'qty', e.target.value)} style={{ width: '100%', padding: '0.3rem', border: '1px solid #e5e7eb', borderRadius: '4px', textAlign: 'right' }} />

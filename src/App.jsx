@@ -64,6 +64,8 @@ import ItemConversionList from './pages/transaction/ItemConversionList';
 import CrmLeadList from './pages/crm/CrmLeadList';
 import CrmOpportunityList from './pages/crm/CrmOpportunityList';
 import CrmQuotationList from './pages/crm/CrmQuotationList';
+import CrmVisitList from './pages/crm/CrmVisitList';
+import LiveTracking from './pages/crm/LiveTracking';
 import CrmActivityList from './pages/crm/CrmActivityList';
 import CrmContactList from './pages/crm/CrmContactList';
 import CrmReport from './pages/crm/CrmReport';
@@ -80,8 +82,7 @@ import Login from './pages/auth/Login';
 import UserList from './pages/settings/UserList';
 import RoleList from './pages/settings/RoleList';
 import ProtectedRoute from './components/ProtectedRoute';
-import { AuthProvider } from './context/AuthContext';
-
+import { AuthProvider, useAuth } from './context/AuthContext';
 
 // ... import all other pages (keep existing imports) ...
 
@@ -90,10 +91,59 @@ function AppContent() {
     const [connectionStatus, setConnectionStatus] = useState('checking');
     const navigate = useNavigate();
     const location = useLocation();
+    const { user, token } = useAuth();
 
     useEffect(() => {
         checkConnection();
     }, []);
+
+    // Live Tracking Reporter
+    useEffect(() => {
+        // Hanya jalan jika user aktif dan rolenya Sales
+        if (!user || user.role !== 'Sales' || !token) return;
+
+        let watchId = null;
+
+        const updateLocation = async (lat, lng) => {
+            try {
+                await fetch('/api/users/location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ lat, lng })
+                });
+            } catch (err) {
+                console.error('Failed to report location:', err);
+            }
+        };
+
+        if ('geolocation' in navigator) {
+            console.log('Live tracking started for Sales user.');
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const { latitude, longitude } = position.coords;
+                    updateLocation(latitude, longitude);
+                },
+                (error) => {
+                    console.error('Geolocation tracking error:', error.message);
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 10000,
+                    timeout: 5000
+                }
+            );
+        }
+
+        return () => {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                console.log('Live tracking stopped.');
+            }
+        };
+    }, [user, token]);
 
     const checkConnection = async () => {
         try {
@@ -255,6 +305,10 @@ function AppContent() {
                 return <CrmOpportunityList />;
             case 'crm-quotation':
                 return <CrmQuotationList />;
+            case 'crm-visit':
+                return <CrmVisitList />;
+            case 'crm-live-tracking':
+                return <LiveTracking />;
             case 'crm-activity':
                 return <CrmActivityList />;
             case 'crm-contact':

@@ -164,7 +164,7 @@ function SalesPersonList() {
                                         onChange={(e) => setFormData({ ...formData, sales_area_id: e.target.value })}
                                     >
                                         <option value="">-- Pilih Area --</option>
-                                        {areas.map(a => (
+                                        {areas.filter(a => a.level === 'City').map(a => (
                                             <option key={a.id} value={a.id}>{a.level}: {a.name}</option>
                                         ))}
                                     </select>

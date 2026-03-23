@@ -4,8 +4,11 @@ function PartnerList({ type }) {
     const [partners, setPartners] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
+    const [activeTab, setActiveTab] = useState('general');
     const [editingPartner, setEditingPartner] = useState(null);
     const [paymentTerms, setPaymentTerms] = useState([]);
+    const [leads, setLeads] = useState([]);
+    const [salesPersons, setSalesPersons] = useState([]);
     const [formData, setFormData] = useState({
         code: '',
         name: '',
@@ -14,17 +17,50 @@ function PartnerList({ type }) {
         phone: '',
         credit_limit: 0,
         check_overdue: 'N',
-        allowed_tops: []
+        allowed_tops: [],
+        sales_person_name: '',
+        npwp_number: '',
+        npwp_address: '',
+        lead_id: '',
+        sales_person_id: ''
     });
     const [systemSettings, setSystemSettings] = useState({});
 
     useEffect(() => {
         fetchPartners();
         fetchSystemSettings();
+        fetchPaymentTerms(); // Fetch for both Customer and Supplier
         if (type === 'Customer') {
-            fetchPaymentTerms();
+            fetchLeads();
+            fetchSalesPersons();
         }
     }, [type]);
+
+    const getToken = () => localStorage.getItem('token');
+    
+    const fetchLeads = async () => {
+        try {
+            const response = await fetch('/api/crm/leads', { headers: { 'Authorization': `Bearer ${getToken()}` } });
+            const data = await response.json();
+            if (data.success) {
+                setLeads(data.data.filter(l => l.status !== 'Lost'));
+            }
+        } catch (error) {
+            console.error('Error fetching leads:', error);
+        }
+    };
+
+    const fetchSalesPersons = async () => {
+        try {
+            const response = await fetch('/api/salespersons');
+            const data = await response.json();
+            if (data.success) {
+                setSalesPersons(data.data.filter(sp => sp.active === 'Y'));
+            }
+        } catch (error) {
+            console.error('Error fetching sales persons:', error);
+        }
+    };
 
     const fetchPaymentTerms = async () => {
         try {
@@ -110,8 +146,14 @@ function PartnerList({ type }) {
             phone: partner.phone || '',
             credit_limit: partner.credit_limit || 0,
             check_overdue: partner.check_overdue || 'N',
-            allowed_tops: allowed_tops
+            allowed_tops: allowed_tops,
+            sales_person_name: partner.sales_person_name || '',
+            npwp_number: partner.npwp_number || '',
+            npwp_address: partner.npwp_address || '',
+            lead_id: partner.lead_id || '',
+            sales_person_id: partner.sales_person_id || ''
         });
+        setActiveTab('general');
         setShowForm(true);
     };
 
@@ -130,7 +172,8 @@ function PartnerList({ type }) {
     };
 
     const resetForm = () => {
-        setFormData({ code: '', name: '', type: type, address: '', phone: '', credit_limit: 0, check_overdue: 'N', allowed_tops: [] });
+        setFormData({ code: '', name: '', type: type, address: '', phone: '', credit_limit: 0, check_overdue: 'N', allowed_tops: [], sales_person_name: '', npwp_number: '', npwp_address: '', lead_id: '', sales_person_id: '' });
+        setActiveTab('general');
     };
 
     return (
@@ -151,8 +194,78 @@ function PartnerList({ type }) {
                             <button className="modal-close" onClick={() => { setShowForm(false); setEditingPartner(null); }}>×</button>
                         </div>
                         <form onSubmit={handleSubmit}>
-                            <div className="form-row">
-                                <div className="form-group">
+                            {/* Tabs Navigation */}
+                            <div className="tabs" style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: '20px' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab('general')}
+                                    style={{
+                                        padding: '10px 20px',
+                                        backgroundColor: 'transparent',
+                                        border: 'none',
+                                        borderBottom: activeTab === 'general' ? '2px solid #3b82f6' : '2px solid transparent',
+                                        color: activeTab === 'general' ? '#3b82f6' : '#64748b',
+                                        fontWeight: activeTab === 'general' ? '600' : '400',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                >
+                                    Informasi Umum
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab('tax')}
+                                    style={{
+                                        padding: '10px 20px',
+                                        backgroundColor: 'transparent',
+                                        border: 'none',
+                                        borderBottom: activeTab === 'tax' ? '2px solid #3b82f6' : '2px solid transparent',
+                                        color: activeTab === 'tax' ? '#3b82f6' : '#64748b',
+                                        fontWeight: activeTab === 'tax' ? '600' : '400',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease'
+                                    }}
+                                >
+                                    Pajak / NPWP
+                                </button>
+                            </div>
+
+                            {activeTab === 'general' && (
+                                <div>
+                                    {type === 'Customer' && (
+                                        <div className="form-row">
+                                            <div className="form-group" style={{ flex: 1 }}>
+                                                <label>Tampilkan / Tarik Data dari Lead (Opsional)</label>
+                                                <select
+                                                    value={formData.lead_id || ''}
+                                                    onChange={(e) => {
+                                                        const selectedLeadId = e.target.value;
+                                                        if (!selectedLeadId) {
+                                                            setFormData({ ...formData, lead_id: '' });
+                                                            return;
+                                                        }
+                                                        const lead = leads.find(l => l.id == selectedLeadId);
+                                                        if (lead) {
+                                                            setFormData({
+                                                                ...formData,
+                                                                lead_id: lead.id,
+                                                                name: lead.company_name || formData.name,
+                                                                phone: lead.phone || formData.phone,
+                                                                address: lead.address || formData.address
+                                                            });
+                                                        }
+                                                    }}
+                                                >
+                                                    <option value="">-- Tidak Tarik dari Lead --</option>
+                                                    {leads.map(lead => (
+                                                        <option key={lead.id} value={lead.id}>{lead.company_name} ({lead.contact_name}) - {lead.status}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="form-row">
+                                        <div className="form-group">
                                     <label>Kode</label>
                                     <input
                                         type="text"
@@ -187,6 +300,41 @@ function PartnerList({ type }) {
                                 </div>
                             </div>
 
+                            {type === 'Customer' && (
+                                <div className="form-row">
+                                    <div className="form-group" style={{ flex: 1 }}>
+                                        <label>Sales Person</label>
+                                        <select
+                                            value={formData.sales_person_id || ''}
+                                            onChange={(e) => {
+                                                const sp_id = e.target.value;
+                                                const sp = salesPersons.find(s => s.id == sp_id);
+                                                setFormData({ ...formData, sales_person_id: sp_id, sales_person_name: sp ? sp.name : '' });
+                                            }}
+                                        >
+                                            <option value="">-- Pilih Sales Person --</option>
+                                            {salesPersons.map(sp => (
+                                                <option key={sp.id} value={sp.id}>{sp.code} - {sp.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+
+                            {type === 'Supplier' && (
+                                <div className="form-row">
+                                    <div className="form-group" style={{ flex: 1 }}>
+                                        <label>Nama Sales</label>
+                                        <input
+                                            type="text"
+                                            value={formData.sales_person_name}
+                                            onChange={(e) => setFormData({ ...formData, sales_person_name: e.target.value })}
+                                            placeholder="Masukkan nama sales supplier"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="form-row">
                                 <div className="form-group" style={{ flex: 2 }}>
                                     <label>Alamat</label>
@@ -206,9 +354,9 @@ function PartnerList({ type }) {
                                 </div>
                             </div>
 
-                            {type === 'Customer' && (
-                                <div className="form-section">
-                                    <h4 style={{ marginBottom: '1rem', color: '#444', borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>Pengaturan Financial & TOP</h4>
+                            <div className="form-section">
+                                <h4 style={{ marginBottom: '1rem', color: '#444', borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>Pengaturan Financial & TOP</h4>
+                                {type === 'Customer' && (
                                     <div className="form-row">
                                         <div className="form-group">
                                             <label>Credit Limit (Rp)</label>
@@ -231,8 +379,10 @@ function PartnerList({ type }) {
                                                 <span>Blokir jika ada Piutang Jatuh Tempo (Overdue)</span>
                                             </label>
                                         </div>
-                                    </div>
-                                    <div className="form-group">
+                                </div>
+                            )}
+
+                            <div className="form-group">
                                         <label>TOP yang Diperbolehkan</label>
                                         <div style={{
                                             display: 'grid',
@@ -279,18 +429,47 @@ function PartnerList({ type }) {
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+
+                            {activeTab === 'tax' && (
+                                <div>
+                                    <div className="form-section">
+                                        <h4 style={{ marginBottom: '1rem', color: '#444', borderBottom: '1px solid #eee', paddingBottom: '0.5rem' }}>Informasi NPWP</h4>
+                                        <div className="form-row">
+                                            <div className="form-group">
+                                                <label>No. NPWP</label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.npwp_number}
+                                                    onChange={(e) => setFormData({ ...formData, npwp_number: e.target.value })}
+                                                    placeholder="Masukkan Nomor NPWP"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-row">
+                                            <div className="form-group" style={{ flex: 1 }}>
+                                                <label>Alamat NPWP</label>
+                                                <textarea
+                                                    value={formData.npwp_address}
+                                                    onChange={(e) => setFormData({ ...formData, npwp_address: e.target.value })}
+                                                    rows="3"
+                                                    placeholder="Masukkan Alamat sesuai NPWP"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             )}
 
-                            <div className="form-actions">
-                                <button type="button" className="btn btn-outline" onClick={() => setShowForm(false)}>Batal</button>
-                                <button type="submit" className="btn btn-primary">{editingPartner ? 'Update' : 'Simpan'}</button>
-                            </div>
-                        </form>
+                                <div className="form-actions" style={{ marginTop: '20px' }}>
+                                    <button type="button" className="btn btn-outline" onClick={() => setShowForm(false)}>Batal</button>
+                                    <button type="submit" className="btn btn-primary">{editingPartner ? 'Update' : 'Simpan'}</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                </div>
-            )}
-
-            {/* Table */}
+                )}
             <div className="card">
                 {loading ? (
                     <div className="loading">
@@ -305,6 +484,7 @@ function PartnerList({ type }) {
                                 <th>Nama</th>
                                 <th>Alamat</th>
                                 <th>Telepon</th>
+                                {type === 'Supplier' && <th>Nama Sales</th>}
                                 <th style={{ textAlign: 'center' }}>Aksi</th>
                             </tr>
                         </thead>
@@ -322,6 +502,7 @@ function PartnerList({ type }) {
                                         <td>{partner.name}</td>
                                         <td>{partner.address}</td>
                                         <td>{partner.phone}</td>
+                                        {type === 'Supplier' && <td>{partner.sales_person_name}</td>}
                                         <td style={{ textAlign: 'center' }}>
                                             <button className="btn-icon" onClick={() => handleEdit(partner)} title="Edit">✏️</button>
                                             <button className="btn-icon" onClick={() => handleDelete(partner.id)} title="Hapus">🗑️</button>

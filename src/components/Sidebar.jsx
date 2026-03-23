@@ -6,13 +6,20 @@ export const menuItems = [
         ],
     },
     {
+        section: 'Aplikasi Lain',
+        items: [
+            { id: 'jagatraya-hr', label: 'JAGATRAYA HR', icon: 'users', href: 'http://localhost:5174' },
+        ],
+    },
+    {
         section: 'CRM',
         items: [
             { id: 'crm-lead', label: 'Lead', icon: 'user' },
             { id: 'crm-opportunity', label: 'Opportunity', icon: 'trending-up' },
             { id: 'crm-quotation', label: 'Quotation', icon: 'file-text' },
-            { id: 'crm-activity', label: 'Activity', icon: 'calendar' },
-            { id: 'crm-contact', label: 'Contact', icon: 'users' },
+            { id: 'crm-visit', label: 'Kunjungan', icon: 'map-pin' },
+            { id: 'crm-live-tracking', label: 'Live Tracking', icon: 'map-pin' },
+            { id: 'crm-activity', label: 'Activity Log', icon: 'calendar' },
             { id: 'crm-report', label: 'CRM Report', icon: 'list' },
         ],
     },
@@ -116,6 +123,17 @@ export const menuItems = [
         ],
     },
     {
+        section: 'Keuangan',
+        items: [
+            { id: 'cash-in', label: 'Kas Masuk', icon: 'dollar-sign' },
+            { id: 'cash-out', label: 'Kas Keluar', icon: 'dollar-sign' },
+            { id: 'bank-in', label: 'Bank Masuk', icon: 'credit-card' },
+            { id: 'bank-out', label: 'Bank Keluar', icon: 'credit-card' },
+            { id: 'journal-voucher', label: 'Jurnal Voucher', icon: 'book-open' },
+            { id: 'system-generated-journal', label: 'Auto Journal', icon: 'file-text' },
+        ],
+    },
+    {
         section: 'Laporan',
         items: [
             { id: 'report/sales-summary', label: 'Laporan Penjualan', icon: 'file-text' },
@@ -133,17 +151,6 @@ export const menuItems = [
             { id: 'report/ap-aging', label: 'AP Aging', icon: 'file-text' },
             { id: 'report/ar-aging', label: 'AR Aging', icon: 'file-text' },
             { id: 'report/crystal-reports', label: 'User Defined Report', icon: 'file-text' },
-        ],
-    },
-    {
-        section: 'Keuangan',
-        items: [
-            { id: 'cash-in', label: 'Kas Masuk', icon: 'dollar-sign' },
-            { id: 'cash-out', label: 'Kas Keluar', icon: 'dollar-sign' },
-            { id: 'bank-in', label: 'Bank Masuk', icon: 'credit-card' },
-            { id: 'bank-out', label: 'Bank Keluar', icon: 'credit-card' },
-            { id: 'journal-voucher', label: 'Jurnal Voucher', icon: 'book-open' },
-            { id: 'system-generated-journal', label: 'Auto Journal', icon: 'file-text' },
         ],
     },
 ];
@@ -388,6 +395,7 @@ function Sidebar({ currentPage, setCurrentPage }) {
     const { selectedPeriod, setSelectedPeriod, periods } = usePeriod();
     const { user, logout, hasPermission } = useAuth();
     const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+    const [hrAppUrl, setHrAppUrl] = useState('http://localhost:5174');
 
     // Initialize expanded sections state
     const [expandedSections, setExpandedSections] = useState(() => {
@@ -402,7 +410,20 @@ function Sidebar({ currentPage, setCurrentPage }) {
 
     useEffect(() => {
         loadMenuConfig();
+        fetchSystemSettings();
     }, []);
+
+    const fetchSystemSettings = async () => {
+        try {
+            const response = await fetch('/api/system-settings');
+            const data = await response.json();
+            if (data.success && data.data && data.data.HR_APP_URL) {
+                setHrAppUrl(data.data.HR_APP_URL);
+            }
+        } catch (error) {
+            console.error('Error fetching system settings for sidebar:', error);
+        }
+    };
 
     const loadMenuConfig = () => {
         const saved = localStorage.getItem('sidebar_menu_config_v4');
@@ -433,10 +454,26 @@ function Sidebar({ currentPage, setCurrentPage }) {
                 }));
         }
 
-        // Apply Permission Filter
+        // Apply Permission Filter and dynamic URL
         return displayItems.map(section => ({
             ...section,
-            items: section.items.filter(item => hasPermission(item.id, 'view'))
+            items: section.items.filter(item => hasPermission(item.id, 'view')).map(item => {
+                if (item.id === 'jagatraya-hr') {
+                    return { ...item, href: hrAppUrl || 'http://localhost:5174' };
+                }
+                if (item.subItems) {
+                    return {
+                        ...item,
+                        subItems: item.subItems.map(subItem => {
+                            if (subItem.id === 'jagatraya-hr') {
+                                return { ...subItem, href: hrAppUrl || 'http://localhost:5174' };
+                            }
+                            return subItem;
+                        })
+                    };
+                }
+                return item;
+            })
         })).filter(section => section.items.length > 0);
     };
 
@@ -528,7 +565,9 @@ function Sidebar({ currentPage, setCurrentPage }) {
                                 <div
                                     className={`nav-item ${(!item.subItems && currentPage === item.id) ? 'active' : ''}`}
                                     onClick={() => {
-                                        if (item.subItems) {
+                                        if (item.href) {
+                                            window.open(item.href, '_blank');
+                                        } else if (item.subItems) {
                                             toggleSubmenu(item.id);
                                         } else {
                                             setCurrentPage(item.id);

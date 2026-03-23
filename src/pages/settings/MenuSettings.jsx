@@ -7,6 +7,17 @@ const defaultMenuItems = [
         items: [{ id: 'dashboard', label: 'Dashboard', icon: 'home' }],
     },
     {
+        section: 'CRM',
+        items: [
+            { id: 'crm-lead', label: 'Lead', icon: 'user' },
+            { id: 'crm-opportunity', label: 'Opportunity', icon: 'trending-up' },
+            { id: 'crm-quotation', label: 'Quotation', icon: 'file-text' },
+            { id: 'crm-visit', label: 'Kunjungan', icon: 'map-pin' },
+            { id: 'crm-activity', label: 'Activity Log', icon: 'calendar' },
+            { id: 'crm-report', label: 'CRM Report', icon: 'list' },
+        ],
+    },
+    {
         section: 'Master Data',
         items: [
             { id: 'entity', label: 'Entity', icon: 'building' },

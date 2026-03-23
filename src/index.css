@@ -630,14 +630,25 @@ body {
 }
 
 /* Icon Buttons */
+.action-buttons {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
 .btn-icon {
-  width: 32px;
+  min-width: 32px;
   height: 32px;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
   border: none;
   background: transparent;
   cursor: pointer;
   border-radius: 6px;
-  font-size: 1rem;
+  font-size: 0.875rem;
   transition: background 0.2s ease;
 }
 

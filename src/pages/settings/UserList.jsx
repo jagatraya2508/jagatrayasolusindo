@@ -11,6 +11,7 @@ const UserList = () => {
         username: '',
         password: '',
         full_name: '',
+        phone: '',
         role_id: '',
         active: 'Y'
     });
@@ -94,6 +95,7 @@ const UserList = () => {
             username: user.username,
             password: '', // Leave empty if not changing
             full_name: user.full_name,
+            phone: user.phone || '',
             role_id: user.role_id,
             active: user.active
         });
@@ -103,7 +105,7 @@ const UserList = () => {
     };
 
     const resetForm = () => {
-        setFormData({ username: '', password: '', full_name: '', role_id: '', active: 'Y' });
+        setFormData({ username: '', password: '', full_name: '', phone: '', role_id: '', active: 'Y' });
         setIsEditing(false);
         setEditId(null);
     };
@@ -123,6 +125,7 @@ const UserList = () => {
                         <tr>
                             <th>Username</th>
                             <th>Nama Lengkap</th>
+                            <th>No Telepon</th>
                             <th>Role</th>
                             <th>Status</th>
                             <th>Aksi</th>
@@ -133,6 +136,7 @@ const UserList = () => {
                             <tr key={user.id}>
                                 <td>{user.username}</td>
                                 <td>{user.full_name}</td>
+                                <td>{user.phone || '-'}</td>
                                 <td>{user.role_name}</td>
                                 <td>
                                     <span className={`badge ${user.active === 'Y' ? 'badge-success' : 'badge-danger'}`}>
@@ -147,6 +151,7 @@ const UserList = () => {
                                                 username: user.username,
                                                 password: '',
                                                 full_name: user.full_name,
+                                                phone: user.phone || '',
                                                 role_id: user.role_id,
                                                 active: user.active
                                             });
@@ -196,6 +201,15 @@ const UserList = () => {
                                         type="text"
                                         value={formData.full_name}
                                         onChange={e => setFormData({ ...formData, full_name: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label>No Telepon</label>
+                                    <input
+                                        type="tel"
+                                        value={formData.phone}
+                                        onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                                        placeholder="Contoh: 081234567890"
                                     />
                                 </div>
                                 <div className="form-group">

@@ -33,7 +33,15 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware - MUST be before routes
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Set up statics for uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Authentication Middleware
 const authenticateToken = (req, res, next) => {
@@ -167,7 +175,7 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 app.get('/api/users', authenticateToken, async (req, res) => {
   try {
     const users = await executeQuery(`
-            SELECT u.id, u.username, u.full_name, u.role_id, u.active, r.name as role_name 
+            SELECT u.id, u.username, u.full_name, u.phone, u.role_id, u.active, r.name as role_name 
             FROM Users u 
             LEFT JOIN Roles r ON u.role_id = r.id 
             ORDER BY u.username
@@ -180,15 +188,15 @@ app.get('/api/users', authenticateToken, async (req, res) => {
 
 app.post('/api/users', authenticateToken, async (req, res) => {
   try {
-    const { username, password, full_name, role_id } = req.body;
+    const { username, password, full_name, role_id, phone } = req.body;
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
     await executeQuery(
-      'INSERT INTO Users (username, password_hash, full_name, role_id, active) VALUES (?, ?, ?, ?, ?)',
-      [username, hashedPassword, full_name, role_id, 'Y']
+      'INSERT INTO Users (username, password_hash, full_name, phone, role_id, active) VALUES (?, ?, ?, ?, ?, ?)',
+      [username, hashedPassword, full_name, phone, role_id, 'Y']
     );
     res.json({ success: true, message: 'User berhasil dibuat' });
   } catch (error) {
@@ -198,19 +206,19 @@ app.post('/api/users', authenticateToken, async (req, res) => {
 
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
   try {
-    const { username, full_name, role_id, active, password } = req.body;
+    const { username, full_name, role_id, active, password, phone } = req.body;
 
     if (password) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       await executeQuery(
-        'UPDATE Users SET username = ?, full_name = ?, role_id = ?, active = ?, password_hash = ? WHERE id = ?',
-        [username, full_name, role_id, active, hashedPassword, req.params.id]
+        'UPDATE Users SET username = ?, full_name = ?, phone = ?, role_id = ?, active = ?, password_hash = ? WHERE id = ?',
+        [username, full_name, phone, role_id, active, hashedPassword, req.params.id]
       );
     } else {
       await executeQuery(
-        'UPDATE Users SET username = ?, full_name = ?, role_id = ?, active = ? WHERE id = ?',
-        [username, full_name, role_id, active, req.params.id]
+        'UPDATE Users SET username = ?, full_name = ?, phone = ?, role_id = ?, active = ? WHERE id = ?',
+        [username, full_name, phone, role_id, active, req.params.id]
       );
     }
     res.json({ success: true, message: 'User berhasil diupdate' });
@@ -224,6 +232,37 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     await executeQuery('DELETE FROM Users WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'User berhasil dihapus' });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== USER TRACKING ====================
+app.post('/api/users/location', authenticateToken, async (req, res) => {
+  try {
+    const { lat, lng } = req.body;
+    await executeQuery(
+      'UPDATE Users SET last_lat = ?, last_lng = ?, last_location_time = CURRENT TIMESTAMP WHERE id = ?',
+      [lat, lng, req.user.id]
+    );
+    res.json({ success: true, message: 'Lokasi berhasil diupdate' });
+  } catch (error) {
+    console.error('Update location error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/users/tracking', authenticateToken, async (req, res) => {
+  try {
+    const trackingData = await executeQuery(`
+      SELECT u.id, u.username, u.full_name, u.phone, u.last_lat, u.last_lng, u.last_location_time, r.name as role_name 
+      FROM Users u 
+      JOIN Roles r ON u.role_id = r.id 
+      WHERE r.name = 'Sales' AND u.active = 'Y' AND u.last_lat IS NOT NULL AND u.last_lng IS NOT NULL
+      ORDER BY u.full_name
+    `);
+    res.json({ success: true, data: trackingData });
+  } catch (error) {
+    console.error('Get tracking error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -656,6 +695,20 @@ app.get('/api/migrate/create-sales-areas', async (req, res) => {
 
     res.json({ success: true, message: 'Tabel SalesAreas dan kolom sales_area_id pada SalesPersons berhasil ditambahkan (atau sudah ada)' });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Fix SalesPersons schema - add active column
+app.get('/api/migrate/fix-salespersons-schema', async (req, res) => {
+  try {
+    await executeQuery(`ALTER TABLE SalesPersons ADD active CHAR(1) DEFAULT 'Y'`);
+    res.json({ success: true, message: 'Kolom active pada SalesPersons berhasil ditambahkan' });
+  } catch (error) {
+    // If column already exists, just return success
+    if (error.message.includes('already exists') || error.message.includes('Duplicate column')) {
+      return res.json({ success: true, message: 'Kolom active sudah ada' });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1640,16 +1693,19 @@ app.post('/api/items', async (req, res) => {
     if (modeSetting.length > 0 && modeSetting[0].setting_value === 'AUTO') {
       const formatSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_FORMAT'");
       const seqSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_SEQ'");
+      const seqLenSetting = await executeQuery("SELECT setting_value FROM SystemSettings WHERE setting_key = 'ITEM_ID_SEQ_LENGTH'");
 
       const format = (formatSetting.length > 0 && formatSetting[0].setting_value) ? formatSetting[0].setting_value : 'ITM-{YY}{MM}-{SEQ}';
       const currentSeq = parseInt((seqSetting.length > 0 && seqSetting[0].setting_value) ? seqSetting[0].setting_value : '0', 10);
       const nextSeq = currentSeq + 1;
 
+      const seqLen = parseInt((seqLenSetting.length > 0 && seqLenSetting[0].setting_value) ? seqLenSetting[0].setting_value : '4', 10);
+
       const now = new Date();
       const year = now.getFullYear().toString();
       const month = String(now.getMonth() + 1).padStart(2, '0');
       const day = String(now.getDate()).padStart(2, '0');
-      const seqStr = String(nextSeq).padStart(4, '0');
+      const seqStr = String(nextSeq).padStart(seqLen, '0');
 
       code = format
         .replace('{YYYY}', year)
@@ -1774,15 +1830,16 @@ app.get('/api/partners/:id', async (req, res) => {
 
 app.post('/api/partners', async (req, res) => {
   try {
-    let { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops } = req.body;
+    let { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops, sales_person_name, npwp_number, npwp_address, lead_id, sales_person_id } = req.body;
 
     // Check if Auto Generate is needed
     if (type === 'Customer' || type === 'Supplier') {
       const modeKey = type === 'Customer' ? 'CUSTOMER_ID_MODE' : 'SUPPLIER_ID_MODE';
       const formatKey = type === 'Customer' ? 'CUSTOMER_ID_FORMAT' : 'SUPPLIER_ID_FORMAT';
       const seqKey = type === 'Customer' ? 'CUSTOMER_ID_SEQ' : 'SUPPLIER_ID_SEQ';
+      const seqLenKey = type === 'Customer' ? 'CUSTOMER_ID_SEQ_LENGTH' : 'SUPPLIER_ID_SEQ_LENGTH';
 
-      const settingsRows = await executeQuery(`SELECT setting_key, setting_value FROM SystemSettings WHERE setting_key IN ('${modeKey}', '${formatKey}', '${seqKey}')`);
+      const settingsRows = await executeQuery(`SELECT setting_key, setting_value FROM SystemSettings WHERE setting_key IN ('${modeKey}', '${formatKey}', '${seqKey}', '${seqLenKey}')`);
 
       const settingsMap = {};
       settingsRows.forEach(row => {
@@ -1795,12 +1852,13 @@ app.post('/api/partners', async (req, res) => {
 
         const currentSeq = parseInt(settingsMap[seqKey] || '0', 10);
         const nextSeq = currentSeq + 1;
+        const seqLen = parseInt(settingsMap[seqLenKey] || '4', 10);
 
         const now = new Date();
         const year = now.getFullYear().toString();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
-        const seqStr = String(nextSeq).padStart(4, '0');
+        const seqStr = String(nextSeq).padStart(seqLen, '0');
 
         code = format
           .replace('{YYYY}', year)
@@ -1821,10 +1879,10 @@ app.post('/api/partners', async (req, res) => {
       }
     }
 
-    console.log(`Inserting into Partners: code=${code}, name=${name}, type=${type}, address=${address}, phone=${phone}, credit_limit=${credit_limit}, check_overdue=${check_overdue}`);
+    console.log(`Inserting into Partners: code=${code}, name=${name}, type=${type}, address=${address}, phone=${phone}, credit_limit=${credit_limit}, check_overdue=${check_overdue}, sales_person_name=${sales_person_name}, npwp_number=${npwp_number}, npwp_address=${npwp_address}, lead_id=${lead_id}, sales_person_id=${sales_person_id}`);
     await executeQuery(
-      'INSERT INTO Partners (code, name, type, address, phone, credit_limit, check_overdue) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [code, name, type, address || '', phone || '', credit_limit || 0, check_overdue || 'N']
+      'INSERT INTO Partners (code, name, type, address, phone, credit_limit, check_overdue, sales_person_name, npwp_number, npwp_address, lead_id, sales_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [code, name, type, address || '', phone || '', credit_limit || 0, check_overdue || 'N', sales_person_name || null, npwp_number || null, npwp_address || null, lead_id || null, sales_person_id || null]
     );
     console.log(`Insert successful!`);
     const result = await executeQuery('SELECT * FROM Partners WHERE code = ?', [code]);
@@ -1845,10 +1903,10 @@ app.post('/api/partners', async (req, res) => {
 
 app.put('/api/partners/:id', async (req, res) => {
   try {
-    const { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops } = req.body;
+    const { code, name, type, address, phone, credit_limit, check_overdue, allowed_tops, sales_person_name, npwp_number, npwp_address, lead_id, sales_person_id } = req.body;
     await executeQuery(
-      'UPDATE Partners SET code = ?, name = ?, type = ?, address = ?, phone = ?, credit_limit = ?, check_overdue = ? WHERE id = ?',
-      [code, name, type, address, phone, credit_limit || 0, check_overdue || 'N', req.params.id]
+      'UPDATE Partners SET code = ?, name = ?, type = ?, address = ?, phone = ?, credit_limit = ?, check_overdue = ?, sales_person_name = ?, npwp_number = ?, npwp_address = ?, lead_id = ?, sales_person_id = ? WHERE id = ?',
+      [code, name, type, address, phone, credit_limit || 0, check_overdue || 'N', sales_person_name || null, npwp_number || null, npwp_address || null, lead_id || null, sales_person_id || null, req.params.id]
     );
 
     await executeQuery('DELETE FROM PartnerPaymentTerms WHERE partner_id = ?', [req.params.id]);
@@ -2141,10 +2199,10 @@ app.get('/api/salespersons', async (req, res) => {
 
 app.post('/api/salespersons', async (req, res) => {
   try {
-    const { code, name, phone, email, sales_area_id } = req.body;
+    const { code, name, phone, email, sales_area_id, active } = req.body;
     await executeQuery(
-      'INSERT INTO SalesPersons (code, name, phone, email, sales_area_id) VALUES (?, ?, ?, ?, ?)',
-      [code, name, phone || '', email || '', sales_area_id || null]
+      'INSERT INTO SalesPersons (code, name, phone, email, sales_area_id, active) VALUES (?, ?, ?, ?, ?, ?)',
+      [code, name, phone || '', email || '', sales_area_id || null, active || 'Y']
     );
     const result = await executeQuery('SELECT * FROM SalesPersons WHERE code = ?', [code]);
     res.json({ success: true, data: result[0], message: 'Sales Person berhasil ditambahkan' });
@@ -9067,6 +9125,76 @@ app.delete('/api/crm/activities/:id', authenticateToken, async (req, res) => {
     await executeQuery('DELETE FROM CrmActivities WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Activity berhasil dihapus' });
   } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+});
+
+// ==================== CRM - VISITS (KUNJUNGAN) ====================
+app.post('/api/crm/visits/check-in', authenticateToken, async (req, res) => {
+  try {
+    const { lead_id, customer_id, subject, description, check_in_lat, check_in_lng, selfie_base64 } = req.body;
+    
+    // Process image
+    let selfie_in = null;
+    if (selfie_base64) {
+      const base64Data = selfie_base64.replace(/^data:image\/\w+;base64,/, "");
+      const fileName = `checkin_${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
+      const filePath = path.join(uploadsDir, fileName);
+      fs.writeFileSync(filePath, base64Data, 'base64');
+      selfie_in = `/uploads/${fileName}`;
+    }
+
+    const activity_date = new Date().toISOString().slice(0, 19).replace('T', ' '); // YYYY-MM-DD HH:mm:ss for DB
+    const assigned_to = req.user.full_name || req.user.username;
+
+    await executeQuery(
+      'INSERT INTO CrmActivities (activity_type, subject, description, activity_date, lead_id, customer_id, assigned_to, status, priority, check_in_time, check_in_lat, check_in_lng, selfie_in) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT TIMESTAMP, ?, ?, ?)',
+      ['Visit', subject || 'Kunjungan', description || '', activity_date, lead_id || null, customer_id || null, assigned_to, 'In Progress', 'Normal', check_in_lat || null, check_in_lng || null, selfie_in]
+    );
+
+    res.json({ success: true, message: 'Berhasil Check-in Kunjungan' });
+  } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+});
+
+app.post('/api/crm/visits/check-out/:id', authenticateToken, async (req, res) => {
+  try {
+    const { check_out_lat, check_out_lng, selfie_base64 } = req.body;
+    
+    let selfie_out = null;
+    if (selfie_base64) {
+      const base64Data = selfie_base64.replace(/^data:image\/\w+;base64,/, "");
+      const fileName = `checkout_${Date.now()}_${Math.floor(Math.random()*1000)}.jpg`;
+      const filePath = path.join(uploadsDir, fileName);
+      fs.writeFileSync(filePath, base64Data, 'base64');
+      selfie_out = `/uploads/${fileName}`;
+    }
+
+    await executeQuery(
+      'UPDATE CrmActivities SET status = ?, check_out_time = CURRENT TIMESTAMP, check_out_lat = ?, check_out_lng = ?, selfie_out = ? WHERE id = ?',
+      ['Completed', check_out_lat || null, check_out_lng || null, selfie_out, req.params.id]
+    );
+
+    res.json({ success: true, message: 'Berhasil Check-out Kunjungan' });
+  } catch (error) { res.status(500).json({ success: false, error: error.message }); }
+});
+
+app.get('/api/migrate/crm-visits', async (req, res) => {
+  try {
+    const colsToAdd = [
+      { name: 'check_in_time', type: 'DATETIME NULL' },
+      { name: 'check_out_time', type: 'DATETIME NULL' },
+      { name: 'check_in_lat', type: 'VARCHAR(50) NULL' },
+      { name: 'check_in_lng', type: 'VARCHAR(50) NULL' },
+      { name: 'check_out_lat', type: 'VARCHAR(50) NULL' },
+      { name: 'check_out_lng', type: 'VARCHAR(50) NULL' },
+      { name: 'selfie_in', type: 'VARCHAR(255) NULL' },
+      { name: 'selfie_out', type: 'VARCHAR(255) NULL' }
+    ];
+    for (const col of colsToAdd) {
+      try { await executeQuery(`ALTER TABLE CrmActivities ADD ${col.name} ${col.type}`); } catch (e) {}
+    }
+    res.json({ success: true, message: 'Kolom untuk Kunjungan (Visits) berhasil ditambahkan ke tabel CrmActivities.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // ==================== CRM - DASHBOARD / REPORT ====================

@@ -383,7 +383,7 @@ function ARInvoiceList() {
 
 
 
-    const formatCurrency = (value) => {
+    const formatMoney = (value) => {
         const code = formData.currency_code || 'IDR';
         try {
             return new Intl.NumberFormat('id-ID', { style: 'currency', currency: code }).format(value || 0);
