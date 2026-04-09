@@ -9,6 +9,7 @@ export const menuItems = [
         section: 'Aplikasi Lain',
         items: [
             { id: 'jagatraya-hr', label: 'JAGATRAYA HR', icon: 'users', href: 'http://localhost:5174' },
+            { id: 'jagatraya-pos', label: 'JAGATRAYA POS', icon: 'shopping-cart', href: 'http://localhost:5175' },
         ],
     },
     {
@@ -37,6 +38,7 @@ export const menuItems = [
         items: [
             { id: 'entity', label: 'Entity', icon: 'building' },
             { id: 'site', label: 'Site', icon: 'map-pin' },
+            { id: 'business-type', label: 'Jenis Usaha', icon: 'building' },
             { id: 'supplier', label: 'Supplier', icon: 'truck' },
             { id: 'customer', label: 'Customer', icon: 'users' },
             { id: 'salesperson', label: 'Sales Person', icon: 'user' },

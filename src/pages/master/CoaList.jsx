@@ -22,6 +22,13 @@ function CoaList() {
     const [showSettings, setShowSettings] = useState(false);
     const [codeSegments, setCodeSegments] = useState(['']);
 
+    // Copy COA states
+    const [showCopyModal, setShowCopyModal] = useState(false);
+    const [copySource, setCopySource] = useState('');
+    const [copyTarget, setCopyTarget] = useState('');
+    const [copyPreview, setCopyPreview] = useState(null);
+    const [copyLoading, setCopyLoading] = useState(false);
+
     const accountTypes = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'];
 
     // Segment labels based on segment count
@@ -276,6 +283,13 @@ function CoaList() {
                         ⚙️ Konfigurasi
                     </button>
                     <button
+                        className="btn btn-outline"
+                        onClick={() => { setCopySource(''); setCopyTarget(''); setCopyPreview(null); setShowCopyModal(true); }}
+                        style={{ borderColor: '#6366f1', color: '#6366f1' }}
+                    >
+                        📋 Copy COA
+                    </button>
+                    <button
                         className="btn btn-primary"
                         onClick={() => { resetForm(); setShowForm(true); }}
                     >
@@ -502,6 +516,193 @@ function CoaList() {
                                 <button type="submit" className="btn btn-primary">Simpan</button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Copy COA Modal */}
+            {showCopyModal && (
+                <div className="modal-overlay">
+                    <div className="modal" style={{ maxWidth: '750px' }}>
+                        <div className="modal-header">
+                            <h3>📋 Copy Chart of Accounts</h3>
+                            <button className="modal-close" onClick={() => setShowCopyModal(false)}>×</button>
+                        </div>
+                        <div style={{ padding: '1.5rem' }}>
+                            <p style={{ color: '#666', marginBottom: '1rem', fontSize: '0.9rem' }}>
+                                Copy seluruh struktur COA dari satu Entity ke Entity lain. Segment pertama (Entity) akan diganti otomatis.
+                            </p>
+
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1.5rem' }}>
+                                <div style={{ flex: 1 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.9rem' }}>Source Entity (Sumber)</label>
+                                    <select
+                                        value={copySource}
+                                        onChange={(e) => { setCopySource(e.target.value); setCopyPreview(null); }}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid #ddd' }}
+                                    >
+                                        <option value="">-- Pilih Entity Sumber --</option>
+                                        {entities.map(ent => (
+                                            <option key={ent.id} value={ent.code}>{ent.code} - {ent.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={{ fontSize: '1.5rem', paddingBottom: '0.5rem', color: '#6366f1' }}>→</div>
+                                <div style={{ flex: 1 }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', fontSize: '0.9rem' }}>Target Entity (Tujuan)</label>
+                                    <select
+                                        value={copyTarget}
+                                        onChange={(e) => { setCopyTarget(e.target.value); setCopyPreview(null); }}
+                                        style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid #ddd' }}
+                                    >
+                                        <option value="">-- Pilih Entity Tujuan --</option>
+                                        {entities.filter(e => e.code !== copySource).map(ent => (
+                                            <option key={ent.id} value={ent.code}>{ent.code} - {ent.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <button
+                                    className="btn btn-outline"
+                                    onClick={async () => {
+                                        if (!copySource || !copyTarget) {
+                                            alert('Pilih Source dan Target Entity terlebih dahulu');
+                                            return;
+                                        }
+                                        setCopyLoading(true);
+                                        try {
+                                            const resp = await fetch('/api/accounts/preview-copy-coa', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ source_entity_code: copySource, target_entity_code: copyTarget })
+                                            });
+                                            const data = await resp.json();
+                                            if (data.success) {
+                                                setCopyPreview(data.data);
+                                            } else {
+                                                alert('Error: ' + data.error);
+                                            }
+                                        } catch (err) {
+                                            alert('Error: ' + err.message);
+                                        }
+                                        setCopyLoading(false);
+                                    }}
+                                    disabled={copyLoading || !copySource || !copyTarget}
+                                    style={{ whiteSpace: 'nowrap' }}
+                                >
+                                    {copyLoading ? '⏳' : '🔍'} Preview
+                                </button>
+                            </div>
+
+                            {/* Preview Results */}
+                            {copyPreview && (
+                                <div>
+                                    {/* Summary Cards */}
+                                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                                        <div style={{
+                                            flex: 1, padding: '1rem', borderRadius: '8px',
+                                            background: 'linear-gradient(135deg, #dbeafe, #eff6ff)',
+                                            border: '1px solid #93c5fd', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#2563eb' }}>{copyPreview.total_source}</div>
+                                            <div style={{ fontSize: '0.8rem', color: '#3b82f6' }}>Total Akun Source</div>
+                                        </div>
+                                        <div style={{
+                                            flex: 1, padding: '1rem', borderRadius: '8px',
+                                            background: 'linear-gradient(135deg, #dcfce7, #f0fdf4)',
+                                            border: '1px solid #86efac', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#16a34a' }}>{copyPreview.will_copy}</div>
+                                            <div style={{ fontSize: '0.8rem', color: '#22c55e' }}>Akan Di-copy</div>
+                                        </div>
+                                        <div style={{
+                                            flex: 1, padding: '1rem', borderRadius: '8px',
+                                            background: 'linear-gradient(135deg, #fef3c7, #fffbeb)',
+                                            border: '1px solid #fcd34d', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '1.5rem', fontWeight: '700', color: '#d97706' }}>{copyPreview.will_skip}</div>
+                                            <div style={{ fontSize: '0.8rem', color: '#f59e0b' }}>Akan Di-skip</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Preview Table */}
+                                    <div style={{ maxHeight: '300px', overflowY: 'auto', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                                        <table className="data-table" style={{ marginBottom: 0 }}>
+                                            <thead>
+                                                <tr>
+                                                    <th style={{ position: 'sticky', top: 0, background: '#f9fafb' }}>Kode Sumber</th>
+                                                    <th style={{ position: 'sticky', top: 0, background: '#f9fafb' }}>→ Kode Tujuan</th>
+                                                    <th style={{ position: 'sticky', top: 0, background: '#f9fafb' }}>Nama Akun</th>
+                                                    <th style={{ position: 'sticky', top: 0, background: '#f9fafb' }}>Tipe</th>
+                                                    <th style={{ position: 'sticky', top: 0, background: '#f9fafb', textAlign: 'center' }}>Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {copyPreview.preview.map((item, idx) => (
+                                                    <tr key={idx} style={{
+                                                        backgroundColor: item.status === 'skip' ? '#fefce8' : 'transparent',
+                                                        opacity: item.status === 'skip' ? 0.7 : 1
+                                                    }}>
+                                                        <td style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{item.source_code}</td>
+                                                        <td style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: '#6366f1', fontWeight: '600' }}>{item.target_code}</td>
+                                                        <td>{item.name}</td>
+                                                        <td>{item.type}</td>
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            {item.status === 'copy' ? (
+                                                                <span className="badge badge-success">✓ Copy</span>
+                                                            ) : (
+                                                                <span className="badge badge-warning" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⚠ Skip</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Actions */}
+                            <div className="form-actions" style={{ marginTop: '1.5rem' }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-outline"
+                                    onClick={() => setShowCopyModal(false)}
+                                >
+                                    Batal
+                                </button>
+                                {copyPreview && copyPreview.will_copy > 0 && (
+                                    <button
+                                        className="btn btn-primary"
+                                        disabled={copyLoading}
+                                        onClick={async () => {
+                                            if (!confirm(`Yakin ingin menyalin ${copyPreview.will_copy} akun dari entity ${copySource} ke entity ${copyTarget}?`)) return;
+                                            setCopyLoading(true);
+                                            try {
+                                                const resp = await fetch('/api/accounts/copy-coa', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ source_entity_code: copySource, target_entity_code: copyTarget })
+                                                });
+                                                const data = await resp.json();
+                                                if (data.success) {
+                                                    alert(data.message);
+                                                    setShowCopyModal(false);
+                                                    fetchAccounts();
+                                                } else {
+                                                    alert('Error: ' + data.error);
+                                                }
+                                            } catch (err) {
+                                                alert('Error: ' + err.message);
+                                            }
+                                            setCopyLoading(false);
+                                        }}
+                                        style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+                                    >
+                                        {copyLoading ? '⏳ Menyalin...' : `📋 Copy ${copyPreview.will_copy} Akun`}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

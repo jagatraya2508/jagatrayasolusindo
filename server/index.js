@@ -2233,10 +2233,60 @@ app.delete('/api/salespersons/:id', async (req, res) => {
   }
 });
 
+// ==================== BUSINESS TYPES ====================
+app.get('/api/business-types', async (req, res) => {
+  try {
+    const result = await executeQuery('SELECT * FROM BusinessTypes ORDER BY code');
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/business-types', async (req, res) => {
+  try {
+    const { code, name, description, active } = req.body;
+    await executeQuery(
+      'INSERT INTO BusinessTypes (code, name, description, active) VALUES (?, ?, ?, ?)',
+      [code, name, description || '', active || 'Y']
+    );
+    res.json({ success: true, message: 'Jenis Usaha berhasil ditambahkan' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/business-types/:id', async (req, res) => {
+  try {
+    const { code, name, description, active } = req.body;
+    await executeQuery(
+      'UPDATE BusinessTypes SET code = ?, name = ?, description = ?, active = ? WHERE id = ?',
+      [code, name, description || '', active || 'Y', req.params.id]
+    );
+    res.json({ success: true, message: 'Jenis Usaha berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/business-types/:id', async (req, res) => {
+  try {
+    await executeQuery('DELETE FROM BusinessTypes WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Jenis Usaha berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== ENTITIES (MASTER ENTITY) ====================
 app.get('/api/entities', async (req, res) => {
   try {
-    const result = await executeQuery('SELECT * FROM Entities ORDER BY code');
+    const result = await executeQuery(`
+      SELECT e.*, bt.name as business_type_name 
+      FROM Entities e
+      LEFT JOIN BusinessTypes bt ON e.business_type_id = bt.id
+      ORDER BY e.code
+    `);
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -2254,10 +2304,10 @@ app.get('/api/entities/:id', async (req, res) => {
 
 app.post('/api/entities', async (req, res) => {
   try {
-    const { code, name, address, phone, email, tax_id, active } = req.body;
+    const { code, name, address, phone, email, tax_id, active, business_type_id } = req.body;
     await executeQuery(
-      'INSERT INTO Entities (code, name, address, phone, email, tax_id, active) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [code, name, address || '', phone || '', email || '', tax_id || '', active || 'Y']
+      'INSERT INTO Entities (code, name, address, phone, email, tax_id, active, business_type_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [code, name, address || '', phone || '', email || '', tax_id || '', active || 'Y', business_type_id || null]
     );
     const result = await executeQuery('SELECT * FROM Entities WHERE code = ?', [code]);
     res.json({ success: true, data: result[0], message: 'Entity berhasil ditambahkan' });
@@ -2268,10 +2318,10 @@ app.post('/api/entities', async (req, res) => {
 
 app.put('/api/entities/:id', async (req, res) => {
   try {
-    const { code, name, address, phone, email, tax_id, active } = req.body;
+    const { code, name, address, phone, email, tax_id, active, business_type_id } = req.body;
     await executeQuery(
-      'UPDATE Entities SET code = ?, name = ?, address = ?, phone = ?, email = ?, tax_id = ?, active = ? WHERE id = ?',
-      [code, name, address, phone, email, tax_id, active || 'Y', req.params.id]
+      'UPDATE Entities SET code = ?, name = ?, address = ?, phone = ?, email = ?, tax_id = ?, active = ?, business_type_id = ? WHERE id = ?',
+      [code, name, address, phone, email, tax_id, active || 'Y', business_type_id || null, req.params.id]
     );
     res.json({ success: true, message: 'Entity berhasil diupdate' });
   } catch (error) {
@@ -2704,11 +2754,23 @@ app.put('/api/journals/:id/unpost', async (req, res) => {
 // ==================== GL SETTINGS ====================
 app.get('/api/gl-settings', async (req, res) => {
   try {
-    const result = await executeQuery(`
+    const { entity_code } = req.query;
+
+    let query = `
       SELECT s.*, a.code as account_code, a.name as account_name
       FROM GeneralLedgerSettings s
       LEFT JOIN Accounts a ON s.account_id = a.id
-    `);
+    `;
+    let params = [];
+
+    if (entity_code) {
+      query += ` WHERE s.entity_code = ?`;
+      params.push(entity_code);
+    } else {
+      query += ` WHERE s.entity_code IS NULL`;
+    }
+
+    const result = await executeQuery(query, params);
 
     // Transform to key-value object for easier frontend consumption
     const settings = {};
@@ -2728,25 +2790,57 @@ app.get('/api/gl-settings', async (req, res) => {
 
 app.put('/api/gl-settings', async (req, res) => {
   try {
-    const settings = req.body; // Expecting array of { key, account_id } or object
+    // Determine if legacy format (just an object of settings) or new format (with entity_code)
+    let entity_code = null;
+    let settings = req.body;
+
+    if (req.body.settings !== undefined) {
+      entity_code = req.body.entity_code || null;
+      settings = req.body.settings;
+    }
 
     // If object { key: account_id, ... }
-    for (const [key, account_id] of Object.entries(settings)) {
-      if (!account_id) continue;
+    for (const [key, raw_account_id] of Object.entries(settings)) {
+      if (!raw_account_id) continue;
+      
+      const account_id = parseInt(raw_account_id, 10);
+      if (isNaN(account_id)) {
+        console.error(`Invalid account_id for key ${key}: ${raw_account_id}`);
+        continue;
+      }
 
       // Check if exists
-      const exists = await executeQuery('SELECT count(*) as count FROM GeneralLedgerSettings WHERE setting_key = ?', [key]);
-
-      if (exists[0].count > 0) {
-        await executeQuery('UPDATE GeneralLedgerSettings SET account_id = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?', [account_id, key]);
+      let exists;
+      if (entity_code) {
+        exists = await executeQuery('SELECT count(*) as count FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code = ?', [key, entity_code]);
       } else {
-        await executeQuery('INSERT INTO GeneralLedgerSettings (setting_key, account_id) VALUES (?, ?)', [key, account_id]);
+        exists = await executeQuery('SELECT count(*) as count FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code IS NULL', [key]);
+      }
+
+      try {
+          if (exists && exists.length > 0 && exists[0].count > 0) {
+            if (entity_code) {
+                await executeQuery('UPDATE GeneralLedgerSettings SET account_id = ?, updated_at = CURRENT TIMESTAMP WHERE setting_key = ? AND entity_code = ?', [account_id, key, entity_code]);
+            } else {
+                await executeQuery('UPDATE GeneralLedgerSettings SET account_id = ?, updated_at = CURRENT TIMESTAMP WHERE setting_key = ? AND entity_code IS NULL', [account_id, key]);
+            }
+          } else {
+            await executeQuery('INSERT INTO GeneralLedgerSettings (setting_key, account_id, entity_code) VALUES (?, ?, ?)', [key, account_id, entity_code]);
+          }
+      } catch (err) {
+          console.error(`Error saving key ${key} with account ${account_id} for entity ${entity_code}:`, err);
+          throw err;
       }
     }
 
     res.json({ success: true, message: 'GL Settings updated successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    let errorMessage = error.message;
+    if (error.odbcErrors && error.odbcErrors.length > 0) {
+      errorMessage += ' Details: ' + JSON.stringify(error.odbcErrors);
+    }
+    console.error('GL Settings Save Error:', error);
+    res.status(500).json({ success: false, error: errorMessage });
   }
 });
 
@@ -2821,8 +2915,24 @@ async function createAutomatedJournal(type, ref_id, doc_number, doc_date, detail
 }
 
 // Function to get GL Account ID by setting key
-async function getGlAccount(key) {
-  const res = await executeQuery('SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ?', [key]);
+async function getGlAccount(key, entityCode = null) {
+  let query = 'SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code ';
+  let params = [key];
+
+  if (entityCode) {
+    query += '= ?';
+    params.push(entityCode);
+  } else {
+    query += 'IS NULL';
+  }
+
+  let res = await executeQuery(query, params);
+
+  // Fallback to global setting (entity_code IS NULL) if specific entity setting not found
+  if (res.length === 0 && entityCode) {
+    res = await executeQuery('SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code IS NULL', [key]);
+  }
+
   return res.length > 0 ? res[0].account_id : null;
 }
 
@@ -2889,10 +2999,11 @@ app.delete('/api/warehouses/:id', async (req, res) => {
 app.get('/api/sub-warehouses', async (req, res) => {
   try {
     const result = await executeQuery(`
-      SELECT sw.*, w.description as warehouse_name
+      SELECT sw.*, w.description as warehouse_name, psw.name as parent_name, psw.code as parent_code
       FROM SubWarehouses sw
       LEFT JOIN Warehouses w ON sw.warehouse_id = w.id
-      ORDER BY sw.code
+      LEFT JOIN SubWarehouses psw ON sw.parent_id = psw.id
+      ORDER BY ISNULL(sw.parent_id, 0), sw.code
     `);
     res.json({ success: true, data: result });
   } catch (error) {
@@ -2912,9 +3023,18 @@ app.get('/api/sub-warehouses/:id', async (req, res) => {
 app.post('/api/sub-warehouses', async (req, res) => {
   try {
     const { code, name, warehouse_id, active } = req.body;
+    const parent_id = req.body.parent_id ? parseInt(req.body.parent_id) : null;
+    // If parent_id is set, auto-inherit warehouse_id from parent
+    let finalWarehouseId = warehouse_id ? parseInt(warehouse_id) : null;
+    if (parent_id) {
+      const parent = await executeQuery('SELECT warehouse_id FROM SubWarehouses WHERE id = ?', [parent_id]);
+      if (parent.length > 0) {
+        finalWarehouseId = parent[0].warehouse_id;
+      }
+    }
     await executeQuery(
-      'INSERT INTO SubWarehouses (code, name, warehouse_id, active) VALUES (?, ?, ?, ?)',
-      [code, name, warehouse_id || null, active || 'Y']
+      'INSERT INTO SubWarehouses (code, name, warehouse_id, parent_id, active) VALUES (?, ?, ?, ?, ?)',
+      [code, name, finalWarehouseId, parent_id, active || 'Y']
     );
     const result = await executeQuery('SELECT * FROM SubWarehouses WHERE code = ?', [code]);
     res.json({ success: true, data: result[0], message: 'Sub Warehouse berhasil ditambahkan' });
@@ -2926,9 +3046,18 @@ app.post('/api/sub-warehouses', async (req, res) => {
 app.put('/api/sub-warehouses/:id', async (req, res) => {
   try {
     const { code, name, warehouse_id, active } = req.body;
+    const parent_id = req.body.parent_id ? parseInt(req.body.parent_id) : null;
+    // If parent_id is set, auto-inherit warehouse_id from parent
+    let finalWarehouseId = warehouse_id ? parseInt(warehouse_id) : null;
+    if (parent_id) {
+      const parent = await executeQuery('SELECT warehouse_id FROM SubWarehouses WHERE id = ?', [parent_id]);
+      if (parent.length > 0) {
+        finalWarehouseId = parent[0].warehouse_id;
+      }
+    }
     await executeQuery(
-      'UPDATE SubWarehouses SET code = ?, name = ?, warehouse_id = ?, active = ? WHERE id = ?',
-      [code, name, warehouse_id || null, active || 'Y', req.params.id]
+      'UPDATE SubWarehouses SET code = ?, name = ?, warehouse_id = ?, parent_id = ?, active = ? WHERE id = ?',
+      [code, name, finalWarehouseId, parent_id, active || 'Y', req.params.id]
     );
     res.json({ success: true, message: 'Sub Warehouse berhasil diupdate' });
   } catch (error) {
@@ -2938,6 +3067,11 @@ app.put('/api/sub-warehouses/:id', async (req, res) => {
 
 app.delete('/api/sub-warehouses/:id', async (req, res) => {
   try {
+    // Check if has children
+    const children = await executeQuery('SELECT COUNT(*) as count FROM SubWarehouses WHERE parent_id = ?', [req.params.id]);
+    if (children[0].count > 0) {
+      return res.status(400).json({ success: false, error: 'Tidak dapat menghapus Sub Warehouse ini karena masih memiliki Sub Warehouse anak. Hapus anak terlebih dahulu.' });
+    }
     await executeQuery('DELETE FROM SubWarehouses WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Sub Warehouse berhasil dihapus' });
   } catch (error) {
@@ -4234,6 +4368,192 @@ app.delete('/api/accounts/:id', async (req, res) => {
     await executeQuery('DELETE FROM Accounts WHERE id = ?', [req.params.id]);
     res.json({ success: true, message: 'Akun berhasil dihapus' });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== COPY COA (CHART OF ACCOUNTS) ====================
+app.post('/api/accounts/preview-copy-coa', async (req, res) => {
+  try {
+    const { source_entity_code, target_entity_code } = req.body;
+
+    if (!source_entity_code || !target_entity_code) {
+      return res.status(400).json({ success: false, error: 'Source dan Target Entity harus diisi' });
+    }
+
+    if (source_entity_code === target_entity_code) {
+      return res.status(400).json({ success: false, error: 'Source dan Target Entity tidak boleh sama' });
+    }
+
+    // Get all accounts that start with source entity code
+    const sourceAccounts = await executeQuery(
+      "SELECT * FROM Accounts WHERE code LIKE ? ORDER BY code",
+      [source_entity_code + '.%']
+    );
+
+    // Also check accounts that exactly match (single segment)
+    const exactMatch = await executeQuery(
+      "SELECT * FROM Accounts WHERE code = ? ORDER BY code",
+      [source_entity_code]
+    );
+
+    const allSourceAccounts = [...exactMatch, ...sourceAccounts];
+
+    // Get existing target accounts to check for duplicates
+    const targetAccounts = await executeQuery(
+      "SELECT code FROM Accounts WHERE code LIKE ? OR code = ?",
+      [target_entity_code + '.%', target_entity_code]
+    );
+    const existingTargetCodes = new Set(targetAccounts.map(a => a.code));
+
+    const preview = [];
+    let willCopy = 0;
+    let willSkip = 0;
+
+    for (const acc of allSourceAccounts) {
+      const codeParts = acc.code.split('.');
+      codeParts[0] = target_entity_code;
+      const newCode = codeParts.join('.');
+
+      if (existingTargetCodes.has(newCode)) {
+        preview.push({
+          source_code: acc.code,
+          target_code: newCode,
+          name: acc.name,
+          type: acc.type,
+          status: 'skip',
+          reason: 'Kode sudah ada di target entity'
+        });
+        willSkip++;
+      } else {
+        preview.push({
+          source_code: acc.code,
+          target_code: newCode,
+          name: acc.name,
+          type: acc.type,
+          status: 'copy'
+        });
+        willCopy++;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        source_entity_code,
+        target_entity_code,
+        total_source: allSourceAccounts.length,
+        will_copy: willCopy,
+        will_skip: willSkip,
+        preview
+      }
+    });
+  } catch (error) {
+    console.error('Error previewing copy COA:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/accounts/copy-coa', async (req, res) => {
+  try {
+    const { source_entity_code, target_entity_code } = req.body;
+
+    if (!source_entity_code || !target_entity_code) {
+      return res.status(400).json({ success: false, error: 'Source dan Target Entity harus diisi' });
+    }
+
+    if (source_entity_code === target_entity_code) {
+      return res.status(400).json({ success: false, error: 'Source dan Target Entity tidak boleh sama' });
+    }
+
+    // Get all accounts that start with source entity code
+    const sourceAccounts = await executeQuery(
+      "SELECT * FROM Accounts WHERE code LIKE ? ORDER BY code",
+      [source_entity_code + '.%']
+    );
+
+    const exactMatch = await executeQuery(
+      "SELECT * FROM Accounts WHERE code = ? ORDER BY code",
+      [source_entity_code]
+    );
+
+    const allSourceAccounts = [...exactMatch, ...sourceAccounts];
+
+    if (allSourceAccounts.length === 0) {
+      return res.status(400).json({ success: false, error: 'Tidak ada akun yang ditemukan untuk entity source' });
+    }
+
+    // Get existing target accounts
+    const targetAccounts = await executeQuery(
+      "SELECT code FROM Accounts WHERE code LIKE ? OR code = ?",
+      [target_entity_code + '.%', target_entity_code]
+    );
+    const existingTargetCodes = new Set(targetAccounts.map(a => a.code));
+
+    // Build a map from old source IDs to track parent relationships
+    const sourceIdToNewCode = new Map();
+    const sourceCodeToId = new Map();
+
+    for (const acc of allSourceAccounts) {
+      const codeParts = acc.code.split('.');
+      codeParts[0] = target_entity_code;
+      const newCode = codeParts.join('.');
+      sourceIdToNewCode.set(acc.id, newCode);
+      sourceCodeToId.set(acc.code, acc.id);
+    }
+
+    let copied = 0;
+    let skipped = 0;
+
+    // First pass: insert accounts without parent_id references (or with null parent)
+    // Second pass: update parent_id after all accounts are inserted
+    // For simplicity, insert all first, then fix parent references
+
+    const newAccountMap = new Map(); // old_id -> new_id
+
+    for (const acc of allSourceAccounts) {
+      const codeParts = acc.code.split('.');
+      codeParts[0] = target_entity_code;
+      const newCode = codeParts.join('.');
+
+      if (existingTargetCodes.has(newCode)) {
+        skipped++;
+        continue;
+      }
+
+      await executeQuery(
+        'INSERT INTO Accounts (code, name, type, level, parent_id, active) VALUES (?, ?, ?, ?, ?, ?)',
+        [newCode, acc.name, acc.type, acc.level || 1, null, acc.active || 'Y']
+      );
+
+      // Get the new account's id
+      const newAcc = await executeQuery('SELECT * FROM Accounts WHERE code = ?', [newCode]);
+      if (newAcc.length > 0) {
+        newAccountMap.set(acc.id, newAcc[0].id);
+      }
+
+      copied++;
+    }
+
+    // Fix parent references
+    for (const acc of allSourceAccounts) {
+      if (acc.parent_id && newAccountMap.has(acc.id) && newAccountMap.has(acc.parent_id)) {
+        const newId = newAccountMap.get(acc.id);
+        const newParentId = newAccountMap.get(acc.parent_id);
+        await executeQuery(
+          'UPDATE Accounts SET parent_id = ? WHERE id = ?',
+          [newParentId, newId]
+        );
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Berhasil menyalin ${copied} akun ke entity ${target_entity_code}. ${skipped} akun di-skip karena sudah ada.`,
+      data: { copied, skipped }
+    });
+  } catch (error) {
+    console.error('Error copying COA:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

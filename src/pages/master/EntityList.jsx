@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 function EntityList() {
     const [entities, setEntities] = useState([]);
+    const [businessTypes, setBusinessTypes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
     const [editingEntity, setEditingEntity] = useState(null);
@@ -12,15 +13,34 @@ function EntityList() {
         phone: '',
         email: '',
         tax_id: '',
-        active: 'Y'
+        active: 'Y',
+        business_type_id: ''
     });
 
     useEffect(() => {
-        fetchEntities();
+        fetchInitialData();
     }, []);
 
-    const fetchEntities = async () => {
+    const fetchInitialData = async () => {
         setLoading(true);
+        try {
+            const [entRes, btRes] = await Promise.all([
+                fetch('/api/entities'),
+                fetch('/api/business-types')
+            ]);
+            
+            const entData = await entRes.json();
+            const btData = await btRes.json();
+            
+            if (entData.success) setEntities(entData.data);
+            if (btData.success) setBusinessTypes(btData.data);
+        } catch (error) {
+            console.error('Error fetching data:', error);
+        }
+        setLoading(false);
+    };
+
+    const fetchEntities = async () => {
         try {
             const response = await fetch('/api/entities');
             const data = await response.json();
@@ -30,7 +50,6 @@ function EntityList() {
         } catch (error) {
             console.error('Error:', error);
         }
-        setLoading(false);
     };
 
     const handleSubmit = async (e) => {
@@ -69,7 +88,8 @@ function EntityList() {
             phone: entity.phone || '',
             email: entity.email || '',
             tax_id: entity.tax_id || '',
-            active: entity.active || 'Y'
+            active: entity.active || 'Y',
+            business_type_id: entity.business_type_id || ''
         });
         setShowForm(true);
     };
@@ -96,7 +116,8 @@ function EntityList() {
             phone: '',
             email: '',
             tax_id: '',
-            active: 'Y'
+            active: 'Y',
+            business_type_id: ''
         });
     };
 
@@ -143,6 +164,18 @@ function EntityList() {
                                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                                     rows="3"
                                 />
+                            </div>
+                            <div className="form-group">
+                                <label>Jenis Usaha</label>
+                                <select
+                                    value={formData.business_type_id}
+                                    onChange={(e) => setFormData({ ...formData, business_type_id: e.target.value })}
+                                >
+                                    <option value="">-- Pilih Jenis Usaha --</option>
+                                    {businessTypes.map((bt) => (
+                                        <option key={bt.id} value={bt.id}>{bt.name}</option>
+                                    ))}
+                                </select>
                             </div>
                             <div className="form-row">
                                 <div className="form-group">
@@ -202,6 +235,7 @@ function EntityList() {
                             <tr>
                                 <th>Kode</th>
                                 <th>Nama</th>
+                                <th>Jenis Usaha</th>
                                 <th>Alamat</th>
                                 <th>Telepon</th>
                                 <th>Status</th>
@@ -220,6 +254,7 @@ function EntityList() {
                                     <tr key={entity.id}>
                                         <td><strong>{entity.code}</strong></td>
                                         <td>{entity.name}</td>
+                                        <td>{entity.business_type_name || '-'}</td>
                                         <td>{entity.address}</td>
                                         <td>{entity.phone}</td>
                                         <td>

@@ -21,6 +21,7 @@ import SiteList from './pages/master/SiteList';
 import WarehouseList from './pages/master/WarehouseList';
 import SubWarehouseList from './pages/master/SubWarehouseList';
 import LocationList from './pages/master/LocationList';
+import BusinessTypeList from './pages/master/BusinessTypeList';
 import PurchaseOrderList from './pages/transaction/PurchaseOrderList';
 import SalesOrderList from './pages/transaction/SalesOrderList';
 import ReceivingList from './pages/transaction/ReceivingList';
@@ -171,6 +172,8 @@ function AppContent() {
                 return <EntityList />;
             case 'site':
                 return <SiteList />;
+            case 'business-type':
+                return <BusinessTypeList />;
             case 'warehouse':
                 return <WarehouseList />;
             case 'sub-warehouse':
