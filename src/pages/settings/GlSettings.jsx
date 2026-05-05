@@ -11,6 +11,7 @@ const GlSettings = () => {
     // Base Schema Definition
     const baseRequiredSettings = [
         { key: 'inventory_account', label: 'Inventory (Persediaan)', type: 'Asset' },
+        { key: 'cash_account', label: 'Cash / Bank (Kas/Bank)', type: 'Asset' },
         { key: 'ap_temp_account', label: 'AP Temporary (Hutang Sementara)', type: 'Liability' },
         { key: 'ap_trade_account', label: 'AP Trade (Hutang Dagang)', type: 'Liability' },
         { key: 'uninvoice_shipment_account', label: 'Uninvoiced Shipment', type: 'Asset' },
@@ -113,6 +114,7 @@ const GlSettings = () => {
     const selectedEntityObj = entities.find(e => e.code === selectedEntity);
     if (selectedEntityObj && selectedEntityObj.business_type_name && selectedEntityObj.business_type_name.match(/F\s*&\s*B/i)) {
         requiredSettings.push({ key: 'pb1_account', label: 'PB1 / Pajak Restoran', type: 'Liability' });
+        requiredSettings.push({ key: 'service_charge_account', label: 'Service Charge', type: 'Revenue' });
     }
 
     return (

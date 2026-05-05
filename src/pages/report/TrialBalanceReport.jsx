@@ -7,34 +7,63 @@ function TrialBalanceReport() {
     const { selectedPeriod } = usePeriod();
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [entities, setEntities] = useState([]);
+    const [filterEntity, setFilterEntity] = useState('');
+
+    // Custom date range
+    const formatDateISO = (d) => new Date(d).toISOString().split('T')[0];
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
 
     // Drill-down states
     const [selectedAccount, setSelectedAccount] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
 
+    // Initialize dates from selected period
     useEffect(() => {
         if (selectedPeriod) {
-            fetchData();
+            setStartDate(formatDateISO(selectedPeriod.start_date));
+            setEndDate(formatDateISO(selectedPeriod.end_date));
         }
     }, [selectedPeriod]);
+
+    // Fetch entities
+    useEffect(() => {
+        fetchEntities();
+    }, []);
+
+    // Auto-fetch when dates or entity changes
+    useEffect(() => {
+        if (startDate && endDate) {
+            fetchData();
+        }
+    }, [startDate, endDate, filterEntity]);
+
+    const fetchEntities = async () => {
+        try {
+            const response = await fetch('/api/entities');
+            const result = await response.json();
+            if (result.success) {
+                setEntities(result.data);
+            }
+        } catch (error) {
+            console.error('Error fetching entities:', error);
+        }
+    };
 
     const fetchData = async () => {
         setLoading(true);
         try {
-            const formatDate = (d) => new Date(d).toISOString().split('T')[0];
             const query = new URLSearchParams({
-                startDate: formatDate(selectedPeriod.start_date),
-                endDate: formatDate(selectedPeriod.end_date)
+                startDate,
+                endDate,
+                ...(filterEntity && { entity_code: filterEntity })
             }).toString();
 
             const response = await fetch(`/api/reports/trial-balance?${query}`);
             const result = await response.json();
 
             if (result.success) {
-                // Show all accounts or filter? Usually TB shows all that have activity or balance.
-                // Assuming backend returns all, we filter those with all zeros if desired, 
-                // but usually seeing zero balance accounts is fine if they had movement. 
-                // Let's filter out completely dead accounts (all 0) to keep it clean.
                 const activeData = result.data.filter(d =>
                     d.initial_balance !== 0 ||
                     d.movement_debit !== 0 ||
@@ -57,20 +86,77 @@ function TrialBalanceReport() {
     const formatCurrency = (val) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(val);
 
     // Totals
-    const totalOpening = data.reduce((acc, curr) => acc + curr.initial_balance, 0); // Note: Mixed types (Dr/Cr) might sum oddly for Net
+    const totalOpening = data.reduce((acc, curr) => acc + curr.initial_balance, 0);
     const totalMutDebit = data.reduce((acc, curr) => acc + curr.movement_debit, 0);
     const totalMutCredit = data.reduce((acc, curr) => acc + curr.movement_credit, 0);
     const totalEnding = data.reduce((acc, curr) => acc + curr.ending_balance, 0);
+
+    const inputStyle = {
+        padding: '0.625rem 1rem',
+        border: '1px solid #d1d5db',
+        borderRadius: '8px',
+        fontSize: '0.875rem',
+        outline: 'none',
+        backgroundColor: '#fff',
+        transition: 'border-color 0.2s ease, box-shadow 0.2s ease'
+    };
 
     return (
         <div>
             <div className="page-header">
                 <h1 className="page-title">Neraca Saldo (Trial Balance)</h1>
-                {selectedPeriod && (
-                    <div style={{ color: '#718096' }}>
-                        Periode: {new Date(selectedPeriod.start_date).toLocaleDateString('id-ID')} s/d {new Date(selectedPeriod.end_date).toLocaleDateString('id-ID')}
+            </div>
+
+            {/* Filter Bar */}
+            <div className="card" style={{ marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    {/* Entity Filter */}
+                    <div style={{ minWidth: '220px' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#4b5563', marginBottom: '6px' }}>Entity</label>
+                        <select
+                            value={filterEntity}
+                            onChange={(e) => setFilterEntity(e.target.value)}
+                            style={{ ...inputStyle, width: '100%' }}
+                        >
+                            <option value="">-- Semua Entity --</option>
+                            {entities.map(ent => (
+                                <option key={ent.id} value={ent.code}>{ent.code} - {ent.name}</option>
+                            ))}
+                        </select>
                     </div>
-                )}
+
+                    {/* Start Date */}
+                    <div style={{ minWidth: '180px' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#4b5563', marginBottom: '6px' }}>Dari Tanggal</label>
+                        <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            style={{ ...inputStyle, width: '100%' }}
+                        />
+                    </div>
+
+                    {/* End Date */}
+                    <div style={{ minWidth: '180px' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#4b5563', marginBottom: '6px' }}>Sampai Tanggal</label>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            style={{ ...inputStyle, width: '100%' }}
+                        />
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1, textAlign: 'right', fontSize: '0.85rem', color: '#6b7280', paddingBottom: '0.5rem' }}>
+                        {startDate && endDate && (
+                            <span>
+                                Periode: <strong>{new Date(startDate).toLocaleDateString('id-ID')}</strong> s/d <strong>{new Date(endDate).toLocaleDateString('id-ID')}</strong>
+                                {filterEntity && <> | Entity: <strong>{filterEntity}</strong></>}
+                            </span>
+                        )}
+                    </div>
+                </div>
             </div>
 
             <div className="card">
@@ -135,14 +221,14 @@ function TrialBalanceReport() {
                 )}
             </div>
 
-            {isModalOpen && selectedAccount && selectedPeriod && (
+            {isModalOpen && selectedAccount && startDate && endDate && (
                 <TransactionDetailModal
                     isOpen={isModalOpen}
                     onClose={() => setIsModalOpen(false)}
                     accountId={selectedAccount.id}
                     accountName={`${selectedAccount.code} - ${selectedAccount.name}`}
-                    startDate={selectedPeriod.start_date}
-                    endDate={selectedPeriod.end_date}
+                    startDate={startDate}
+                    endDate={endDate}
                 />
             )}
         </div>

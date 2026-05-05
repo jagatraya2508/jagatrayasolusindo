@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import * as XLSX from 'xlsx';
 
 function CrmReport() {
     const [dashboardData, setDashboardData] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [exporting, setExporting] = useState(false);
     const { user } = useAuth();
+    const printRef = useRef();
 
     useEffect(() => { fetchDashboard(); }, []);
 
@@ -21,10 +24,264 @@ function CrmReport() {
     };
 
     const formatCurrency = (val) => new Intl.NumberFormat('id-ID').format(val || 0);
+    const formatDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-';
 
     const stageColors = { Prospecting: '#3182ce', Proposal: '#d69e2e', Negotiation: '#805ad5', 'Closed Won': '#38a169', 'Closed Lost': '#e53e3e' };
     const statusColors = { New: '#3182ce', Contacted: '#d69e2e', Qualified: '#38a169', Lost: '#e53e3e' };
     const quotStatusColors = { Draft: '#6b7280', Sent: '#3182ce', Accepted: '#38a169', Rejected: '#e53e3e' };
+
+    // ==================== PRINT ====================
+    const handlePrint = () => {
+        window.print();
+    };
+
+    // ==================== EXPORT EXCEL ====================
+    const handleExportExcel = () => {
+        if (!dashboardData) return;
+        setExporting(true);
+        try {
+            const { summary, leadsByStatus, oppsByStage, quotsByStatus, recentActivities } = dashboardData;
+            const wb = XLSX.utils.book_new();
+
+            // Sheet 1: Summary
+            const summaryData = [
+                ['CRM Dashboard Report'],
+                ['Tanggal Export', new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })],
+                [],
+                ['Metrik', 'Nilai'],
+                ['Total Leads', summary.totalLeads],
+                ['Total Opportunities', summary.totalOpportunities],
+                ['Total Quotations', summary.totalQuotations],
+                ['Pipeline Value (Rp)', summary.pipelineValue || 0],
+                ['Won Value (Rp)', summary.wonValue || 0],
+            ];
+            const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+            wsSummary['!cols'] = [{ wch: 25 }, { wch: 25 }];
+            XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+            // Sheet 2: Lead by Status
+            const leadData = [['Status', 'Jumlah'], ...leadsByStatus.map(l => [l.status, l.count])];
+            const wsLead = XLSX.utils.aoa_to_sheet(leadData);
+            wsLead['!cols'] = [{ wch: 20 }, { wch: 15 }];
+            XLSX.utils.book_append_sheet(wb, wsLead, 'Lead by Status');
+
+            // Sheet 3: Opportunity Pipeline
+            const oppData = [['Stage', 'Jumlah', 'Total Value (Rp)'], ...oppsByStage.map(o => [o.stage, o.count, o.total_value || 0])];
+            const wsOpp = XLSX.utils.aoa_to_sheet(oppData);
+            wsOpp['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }];
+            XLSX.utils.book_append_sheet(wb, wsOpp, 'Opportunity Pipeline');
+
+            // Sheet 4: Quotation by Status
+            const quotData = [['Status', 'Jumlah', 'Total Value (Rp)'], ...quotsByStatus.map(q => [q.status, q.count, q.total_value || 0])];
+            const wsQuot = XLSX.utils.aoa_to_sheet(quotData);
+            wsQuot['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 20 }];
+            XLSX.utils.book_append_sheet(wb, wsQuot, 'Quotation by Status');
+
+            // Sheet 5: Recent Activities
+            const actData = [
+                ['Tipe', 'Subject', 'Lead', 'Tanggal', 'Status'],
+                ...recentActivities.map(a => [
+                    a.activity_type || '-',
+                    a.subject || '-',
+                    a.lead_name || '-',
+                    a.activity_date ? formatDate(a.activity_date) : '-',
+                    a.status || '-'
+                ])
+            ];
+            const wsAct = XLSX.utils.aoa_to_sheet(actData);
+            wsAct['!cols'] = [{ wch: 12 }, { wch: 30 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
+            XLSX.utils.book_append_sheet(wb, wsAct, 'Aktivitas Terakhir');
+
+            XLSX.writeFile(wb, `CRM_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+        } catch (error) {
+            console.error('Export Excel Error:', error);
+            alert('Gagal export Excel: ' + error.message);
+        }
+        setExporting(false);
+    };
+
+    // ==================== EXPORT PDF ====================
+    const handleExportPDF = async () => {
+        if (!dashboardData) return;
+        setExporting(true);
+        try {
+            const { default: jsPDF } = await import('jspdf');
+            const { default: autoTable } = await import('jspdf-autotable');
+
+            const { summary, leadsByStatus, oppsByStage, quotsByStatus, recentActivities } = dashboardData;
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const pageWidth = doc.internal.pageSize.getWidth();
+            let y = 15;
+
+            // Title
+            doc.setFontSize(18);
+            doc.setTextColor(30, 58, 138);
+            doc.text('CRM Dashboard & Report', pageWidth / 2, y, { align: 'center' });
+            y += 8;
+
+            doc.setFontSize(10);
+            doc.setTextColor(107, 114, 128);
+            doc.text(`Tanggal: ${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}`, pageWidth / 2, y, { align: 'center' });
+            y += 10;
+
+            // Divider
+            doc.setDrawColor(209, 213, 219);
+            doc.line(14, y, pageWidth - 14, y);
+            y += 8;
+
+            // Summary Cards as Table
+            doc.setFontSize(13);
+            doc.setTextColor(31, 41, 55);
+            doc.text('Ringkasan', 14, y);
+            y += 6;
+
+            autoTable(doc, {
+                startY: y,
+                head: [['Metrik', 'Nilai']],
+                body: [
+                    ['Total Leads', String(summary.totalLeads)],
+                    ['Total Opportunities', String(summary.totalOpportunities)],
+                    ['Total Quotations', String(summary.totalQuotations)],
+                    ['Pipeline Value', `Rp ${formatCurrency(summary.pipelineValue)}`],
+                    ['Won Value', `Rp ${formatCurrency(summary.wonValue)}`],
+                ],
+                theme: 'grid',
+                headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold', fontSize: 10 },
+                bodyStyles: { fontSize: 10, textColor: [31, 41, 55] },
+                alternateRowStyles: { fillColor: [245, 247, 250] },
+                margin: { left: 14, right: 14 },
+                tableWidth: 'auto',
+                columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 60 } },
+            });
+            y = doc.lastAutoTable.finalY + 12;
+
+            // Lead by Status
+            doc.setFontSize(13);
+            doc.setTextColor(31, 41, 55);
+            doc.text('Lead berdasarkan Status', 14, y);
+            y += 6;
+
+            if (leadsByStatus.length > 0) {
+                autoTable(doc, {
+                    startY: y,
+                    head: [['Status', 'Jumlah']],
+                    body: leadsByStatus.map(l => [l.status, String(l.count)]),
+                    theme: 'grid',
+                    headStyles: { fillColor: [102, 126, 234], textColor: 255, fontStyle: 'bold', fontSize: 10 },
+                    bodyStyles: { fontSize: 10, textColor: [31, 41, 55] },
+                    alternateRowStyles: { fillColor: [245, 247, 250] },
+                    margin: { left: 14, right: 14 },
+                    columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 40 } },
+                });
+                y = doc.lastAutoTable.finalY + 12;
+            } else {
+                doc.setFontSize(10);
+                doc.setTextColor(150);
+                doc.text('Belum ada data', 14, y);
+                y += 10;
+            }
+
+            // Opportunity Pipeline
+            if (y > 240) { doc.addPage(); y = 15; }
+            doc.setFontSize(13);
+            doc.setTextColor(31, 41, 55);
+            doc.text('Opportunity Pipeline', 14, y);
+            y += 6;
+
+            if (oppsByStage.length > 0) {
+                autoTable(doc, {
+                    startY: y,
+                    head: [['Stage', 'Jumlah', 'Total Value (Rp)']],
+                    body: oppsByStage.map(o => [o.stage, String(o.count), `Rp ${formatCurrency(o.total_value)}`]),
+                    theme: 'grid',
+                    headStyles: { fillColor: [245, 87, 108], textColor: 255, fontStyle: 'bold', fontSize: 10 },
+                    bodyStyles: { fontSize: 10, textColor: [31, 41, 55] },
+                    alternateRowStyles: { fillColor: [245, 247, 250] },
+                    margin: { left: 14, right: 14 },
+                    columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 30 }, 2: { cellWidth: 50 } },
+                });
+                y = doc.lastAutoTable.finalY + 12;
+            } else {
+                doc.setFontSize(10);
+                doc.setTextColor(150);
+                doc.text('Belum ada data', 14, y);
+                y += 10;
+            }
+
+            // Quotation by Status
+            if (y > 240) { doc.addPage(); y = 15; }
+            doc.setFontSize(13);
+            doc.setTextColor(31, 41, 55);
+            doc.text('Quotation berdasarkan Status', 14, y);
+            y += 6;
+
+            if (quotsByStatus.length > 0) {
+                autoTable(doc, {
+                    startY: y,
+                    head: [['Status', 'Jumlah', 'Total Value (Rp)']],
+                    body: quotsByStatus.map(q => [q.status, String(q.count), `Rp ${formatCurrency(q.total_value)}`]),
+                    theme: 'grid',
+                    headStyles: { fillColor: [56, 161, 105], textColor: 255, fontStyle: 'bold', fontSize: 10 },
+                    bodyStyles: { fontSize: 10, textColor: [31, 41, 55] },
+                    alternateRowStyles: { fillColor: [245, 247, 250] },
+                    margin: { left: 14, right: 14 },
+                    columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 30 }, 2: { cellWidth: 50 } },
+                });
+                y = doc.lastAutoTable.finalY + 12;
+            } else {
+                doc.setFontSize(10);
+                doc.setTextColor(150);
+                doc.text('Belum ada data', 14, y);
+                y += 10;
+            }
+
+            // Recent Activities
+            if (y > 200) { doc.addPage(); y = 15; }
+            doc.setFontSize(13);
+            doc.setTextColor(31, 41, 55);
+            doc.text('Aktivitas Terakhir', 14, y);
+            y += 6;
+
+            if (recentActivities.length > 0) {
+                autoTable(doc, {
+                    startY: y,
+                    head: [['Tipe', 'Subject', 'Lead', 'Tanggal', 'Status']],
+                    body: recentActivities.map(a => [
+                        a.activity_type || '-',
+                        a.subject || '-',
+                        a.lead_name || '-',
+                        formatDate(a.activity_date),
+                        a.status || '-'
+                    ]),
+                    theme: 'grid',
+                    headStyles: { fillColor: [79, 172, 254], textColor: 255, fontStyle: 'bold', fontSize: 9 },
+                    bodyStyles: { fontSize: 9, textColor: [31, 41, 55] },
+                    alternateRowStyles: { fillColor: [245, 247, 250] },
+                    margin: { left: 14, right: 14 },
+                    columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 50 }, 2: { cellWidth: 40 }, 3: { cellWidth: 28 }, 4: { cellWidth: 25 } },
+                });
+            } else {
+                doc.setFontSize(10);
+                doc.setTextColor(150);
+                doc.text('Belum ada aktivitas', 14, y);
+            }
+
+            // Footer
+            const pageCount = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= pageCount; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setTextColor(180);
+                doc.text(`JAGATRAYA ERP - CRM Report | Hal ${i} / ${pageCount}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
+            }
+
+            doc.save(`CRM_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+        } catch (error) {
+            console.error('Export PDF Error:', error);
+            alert('Gagal export PDF: ' + error.message);
+        }
+        setExporting(false);
+    };
 
     if (loading) return <div className="loading"><div className="loading-spinner"></div><p>Memuat dashboard CRM...</p></div>;
     if (!dashboardData) return <div>Tidak bisa memuat data.</div>;
@@ -35,10 +292,31 @@ function CrmReport() {
     const maxOppCount = Math.max(...(oppsByStage.map(o => o.count) || [1]), 1);
 
     return (
-        <div>
-            <div className="page-header">
+        <div ref={printRef}>
+            <div className="page-header" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
                 <h1 className="page-title">📈 CRM Dashboard & Report</h1>
-                <button className="btn btn-outline" onClick={fetchDashboard}>🔄 Refresh</button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button className="btn btn-outline" onClick={fetchDashboard} disabled={exporting}>🔄 Refresh</button>
+                    <button className="btn btn-outline" onClick={handlePrint} disabled={exporting} style={{ borderColor: '#6366f1', color: '#6366f1' }}>
+                        🖨️ Cetak
+                    </button>
+                    <button
+                        className="btn"
+                        onClick={handleExportPDF}
+                        disabled={exporting}
+                        style={{ background: 'linear-gradient(135deg, #e53e3e, #c53030)', color: 'white', border: 'none', borderRadius: '8px', padding: '0.5rem 1rem', cursor: exporting ? 'not-allowed' : 'pointer', opacity: exporting ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '600', fontSize: '0.85rem', boxShadow: '0 2px 8px rgba(229,62,62,0.3)' }}
+                    >
+                        📄 {exporting ? 'Proses...' : 'Export PDF'}
+                    </button>
+                    <button
+                        className="btn"
+                        onClick={handleExportExcel}
+                        disabled={exporting}
+                        style={{ background: 'linear-gradient(135deg, #38a169, #2f855a)', color: 'white', border: 'none', borderRadius: '8px', padding: '0.5rem 1rem', cursor: exporting ? 'not-allowed' : 'pointer', opacity: exporting ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '600', fontSize: '0.85rem', boxShadow: '0 2px 8px rgba(56,161,105,0.3)' }}
+                    >
+                        📊 {exporting ? 'Proses...' : 'Export Excel'}
+                    </button>
+                </div>
             </div>
 
             {/* Summary Cards */}

@@ -6,6 +6,7 @@ function CoaList() {
     const [entities, setEntities] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [filterEntity, setFilterEntity] = useState('');
     const [showForm, setShowForm] = useState(false);
     const [editingAccount, setEditingAccount] = useState(null);
     const [formData, setFormData] = useState({
@@ -120,10 +121,12 @@ function CoaList() {
         setSearchTerm(e.target.value);
     };
 
-    const filteredAccounts = accounts.filter(acc =>
-        acc.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        acc.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredAccounts = accounts.filter(acc => {
+        const matchSearch = acc.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            acc.name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchEntity = filterEntity ? (acc.code === filterEntity || acc.code.startsWith(filterEntity + '.')) : true;
+        return matchSearch && matchEntity;
+    });
 
     const resetForm = () => {
         setFormData({
@@ -299,13 +302,38 @@ function CoaList() {
             </div>
 
             <div className="card">
-                <div className="search-bar">
+                <div className="search-bar" style={{ display: 'flex', gap: '10px', marginBottom: '1.5rem' }}>
+                    <select
+                        value={filterEntity}
+                        onChange={(e) => setFilterEntity(e.target.value)}
+                        style={{ 
+                            maxWidth: '250px',
+                            padding: '0.75rem 1rem',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            fontSize: '0.875rem',
+                            backgroundColor: '#fff',
+                            outline: 'none'
+                        }}
+                    >
+                        <option value="">-- Semua Entity --</option>
+                        {entities.map(ent => (
+                            <option key={ent.id} value={ent.code}>{ent.code} - {ent.name}</option>
+                        ))}
+                    </select>
                     <input
                         type="text"
                         placeholder="Cari akun..."
                         value={searchTerm}
                         onChange={handleSearch}
-                        className="search-input"
+                        style={{ 
+                            flex: 1,
+                            padding: '0.75rem 1rem',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            fontSize: '0.875rem',
+                            outline: 'none'
+                        }}
                     />
                 </div>
 

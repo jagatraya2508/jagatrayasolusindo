@@ -726,3 +726,38 @@ body {
 .checkbox-item-hover:hover {
   background-color: #f3f4f6;
 }
+
+/* Print Styles */
+@media print {
+  .sidebar {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    padding: 0.5rem !important;
+  }
+
+  .page-header .btn,
+  .page-header .btn-outline,
+  .page-header button {
+    display: none !important;
+  }
+
+  .page-header {
+    justify-content: center !important;
+    margin-bottom: 1rem !important;
+  }
+
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+    break-inside: avoid;
+  }
+
+  body {
+    background-color: white !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

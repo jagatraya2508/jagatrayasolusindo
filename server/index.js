@@ -5674,7 +5674,7 @@ app.get('/api/reports/purchase-summary', async (req, res) => {
 // ==================== TRIAL BALANCE REPORT ====================
 app.get('/api/reports/trial-balance', async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, entity_code } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'startDate dan endDate harus diisi' });
@@ -5688,6 +5688,14 @@ app.get('/api/reports/trial-balance', async (req, res) => {
     // Debit selalu menambah aset/beban, Kredit mengurangi.
     // Untuk laporan Trial Balance standar, kita tampilkan total Debit dan Kredit per akun
     // Tapi user minta Saldo Awal dan Saldo Akhir.
+
+    // Build entity filter
+    let entityFilter = '';
+    const extraParams = [];
+    if (entity_code) {
+      entityFilter = ` WHERE a.code LIKE ?`;
+      extraParams.push(entity_code + '.%');
+    }
 
     const query = `
       SELECT 
@@ -5718,11 +5726,13 @@ app.get('/api/reports/trial-balance', async (req, res) => {
       FROM Accounts a
       LEFT JOIN JournalVoucherDetails jvd ON a.id = jvd.coa_id
       LEFT JOIN JournalVouchers jv ON jvd.jv_id = jv.id
+      ${entityFilter}
       GROUP BY a.id, a.code, a.name, a.type
       ORDER BY a.code ASC
     `;
 
     const params = [
+      ...extraParams,
       startDate, startDate, // Initial
       startDate, endDate,   // Movement Debit
       startDate, endDate    // Movement Credit
@@ -9888,11 +9898,104 @@ app.get('/api/fixed-assets/report/summary', async (req, res) => {
   }
 });
 
+// ==================== HR MODULE ROUTES ====================
+import hrAuthRoutes from './hr/routes/auth.js';
+import hrEmployeeRoutes from './hr/routes/employees.js';
+import hrAttendanceRoutes from './hr/routes/attendance.js';
+import hrLeaveRoutes from './hr/routes/leave.js';
+import hrOvertimeRoutes from './hr/routes/overtime.js';
+import hrPayrollRoutes from './hr/routes/payroll.js';
+import hrLoanRoutes from './hr/routes/loans.js';
+import hrSettingsRoutes from './hr/routes/settings.js';
+import hrSchedulesRoutes from './hr/routes/schedules.js';
+
+app.use('/api/hr/auth', hrAuthRoutes);
+app.use('/api/hr/employees', hrEmployeeRoutes);
+app.use('/api/hr/attendance', hrAttendanceRoutes);
+app.use('/api/hr/leave', hrLeaveRoutes);
+app.use('/api/hr/overtime', hrOvertimeRoutes);
+app.use('/api/hr/payroll', hrPayrollRoutes);
+app.use('/api/hr/loans', hrLoanRoutes);
+app.use('/api/hr/settings', hrSettingsRoutes);
+app.use('/api/hr/schedules', hrSchedulesRoutes);
+
+// HR uploads
+const hrUploadsDir = path.join(__dirname, 'hr/uploads');
+if (!fs.existsSync(hrUploadsDir)) fs.mkdirSync(hrUploadsDir, { recursive: true });
+app.use('/hr/uploads', express.static(hrUploadsDir));
+
+// HR health check
+app.get('/api/hr/test', async (req, res) => {
+  try {
+    const { executeQuery: hrQuery } = await import('./hr/db.js');
+    const result = await hrQuery('SELECT 1 as test');
+    res.json({ success: true, message: 'JAGATRAYA HR Module - Database connected!', data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== POS MODULE ROUTES ====================
+import posAuthRoutes from './pos/routes/auth.js';
+import posProductsRoutes from './pos/routes/products.js';
+import posCategoriesRoutes from './pos/routes/categories.js';
+import posTransactionsRoutes from './pos/routes/transactions.js';
+import posPaymentsRoutes from './pos/routes/payments.js';
+import posCashSessionsRoutes from './pos/routes/cash-sessions.js';
+import posTablesRoutes from './pos/routes/tables.js';
+import posOutletsRoutes from './pos/routes/outlets.js';
+import posReportsRoutes from './pos/routes/reports.js';
+import posSettingsRoutes from './pos/routes/settings.js';
+import posUsersRoutes from './pos/routes/users.js';
+import posUnitsRoutes from './pos/routes/units.js';
+import posPromosRoutes from './pos/routes/promos.js';
+import posTaxesRoutes from './pos/routes/taxes.js';
+import posEntitiesRoutes from './pos/routes/entities.js';
+import posSitesRoutes from './pos/routes/sites.js';
+import posMasterSitesRoutes from './pos/routes/master-sites.js';
+
+app.use('/api/pos/auth', posAuthRoutes);
+app.use('/api/pos/products', posProductsRoutes);
+app.use('/api/pos/categories', posCategoriesRoutes);
+app.use('/api/pos/transactions', posTransactionsRoutes);
+app.use('/api/pos/payments', posPaymentsRoutes);
+app.use('/api/pos/cash-sessions', posCashSessionsRoutes);
+app.use('/api/pos/tables', posTablesRoutes);
+app.use('/api/pos/outlets', posOutletsRoutes);
+app.use('/api/pos/reports', posReportsRoutes);
+app.use('/api/pos/settings', posSettingsRoutes);
+app.use('/api/pos/users', posUsersRoutes);
+app.use('/api/pos/units', posUnitsRoutes);
+app.use('/api/pos/promos', posPromosRoutes);
+app.use('/api/pos/taxes', posTaxesRoutes);
+app.use('/api/pos/entities', posEntitiesRoutes);
+app.use('/api/pos/sites', posSitesRoutes);
+app.use('/api/pos/master-sites', posMasterSitesRoutes);
+
+// POS uploads
+const posUploadsDir = path.join(__dirname, 'pos/uploads');
+if (!fs.existsSync(posUploadsDir)) fs.mkdirSync(posUploadsDir, { recursive: true });
+app.use('/pos/uploads', express.static(posUploadsDir));
+
+// POS health check
+app.get('/api/pos/test', async (req, res) => {
+  try {
+    const { executeQuery: posQuery } = await import('./pos/db.js');
+    const result = await posQuery('SELECT 1 as test');
+    res.json({ success: true, message: 'JAGATRAYA POS Module - Database connected!', data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, async () => {
-  console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
-  console.log('✅ Crystal Reports & ReportDefinitions Endpoints Ready');
+  console.log(`🚀 JAGATRAYA Unified Server berjalan di http://localhost:${PORT}`);
+  console.log('   📦 ERP Module - Ready');
+  console.log('   👥 HR  Module - Ready (/api/hr/...)');
+  console.log('   🛒 POS Module - Ready (/api/pos/...)');
   await connectDatabase();
 });
 
 export { executeQuery };
+
