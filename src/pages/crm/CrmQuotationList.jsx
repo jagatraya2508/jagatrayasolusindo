@@ -14,7 +14,7 @@ function CrmQuotationList() {
         opportunity_id: '', customer_id: '', customer_name: '',
         quotation_date: new Date().toISOString().substring(0, 10), valid_until: '',
         subtotal: 0, discount_pct: 0, discount_amount: 0, tax_pct: 11, tax_amount: 0,
-        total: 0, currency_code: 'IDR', status: 'Draft', notes: '',
+        total: 0, currency_code: 'IDR', status: 'Draft', notes: '', price_list_id: '',
         items: [{ item_id: '', item_code: '', description: '', qty: 1, unit: '', unit_price: 0, discount_pct: 0, total_price: 0 }]
     };
     const [formData, setFormData] = useState(initialFormData);
@@ -24,8 +24,10 @@ function CrmQuotationList() {
     const statusColors = { Draft: '#6b7280', Sent: '#3182ce', Accepted: '#38a169', Rejected: '#e53e3e' };
 
     const [masterItems, setMasterItems] = useState([]);
+    const [priceLists, setPriceLists] = useState([]);
+    const [selectedPriceListDetails, setSelectedPriceListDetails] = useState([]);
 
-    useEffect(() => { fetchData(); fetchOpportunities(); fetchMasterItems(); }, [filterStatus]);
+    useEffect(() => { fetchData(); fetchOpportunities(); fetchMasterItems(); fetchPriceLists(); }, [filterStatus]);
 
     const fetchMasterItems = async () => {
         try {
@@ -35,6 +37,14 @@ function CrmQuotationList() {
                 setMasterItems(data.data.filter(i => i.active !== 'N'));
             }
         } catch (error) { console.error('Error fetching master items:', error); }
+    };
+
+    const fetchPriceLists = async () => {
+        try {
+            const response = await fetch('/api/price-lists-active', { headers: { 'Authorization': `Bearer ${getToken()}` } });
+            const data = await response.json();
+            if (data.success) setPriceLists(data.data);
+        } catch (error) { console.error('Error fetching price lists:', error); }
     };
 
     const getToken = () => localStorage.getItem('token');
@@ -75,6 +85,7 @@ function CrmQuotationList() {
                     subtotal: q.subtotal || 0, discount_pct: q.discount_pct || 0, discount_amount: q.discount_amount || 0,
                     tax_pct: q.tax_pct || 0, tax_amount: q.tax_amount || 0, total: q.total || 0,
                     currency_code: q.currency_code || 'IDR', status: q.status || 'Draft', notes: q.notes || '',
+                    price_list_id: q.price_list_id || '',
                     items: (q.items && q.items.length > 0) ? q.items.map(i => ({
                         item_id: i.item_id || '', item_code: i.item_code || '', description: i.description || '', qty: i.qty || 1,
                         unit: i.unit || '', unit_price: i.unit_price || 0, discount_pct: i.discount_pct || 0,
@@ -100,13 +111,26 @@ function CrmQuotationList() {
         
         if (field === 'item_id') {
             const selectedItem = masterItems.find(i => String(i.id) === String(value));
+            let unitPrice = selectedItem ? (selectedItem.standard_price || 0) : 0;
+            let discPctItem = 0;
+            
+            // Check price from Price List if selected
+            if (formData.price_list_id && selectedPriceListDetails.length > 0) {
+                const plDetail = selectedPriceListDetails.find(pl => String(pl.item_id) === String(value));
+                if (plDetail) {
+                    unitPrice = parseFloat(plDetail.price) || unitPrice;
+                    discPctItem = parseFloat(plDetail.discount_percent) || 0;
+                }
+            }
+            
             newItems[index] = {
                 ...newItems[index],
                 item_id: value,
                 item_code: selectedItem ? selectedItem.code : '',
                 description: selectedItem ? selectedItem.name : '',
                 unit: selectedItem ? selectedItem.unit : '',
-                unit_price: selectedItem ? (selectedItem.standard_price || 0) : 0,
+                unit_price: unitPrice,
+                discount_pct: discPctItem,
             };
         } else {
             newItems[index] = { ...newItems[index], [field]: value };
@@ -215,6 +239,55 @@ function CrmQuotationList() {
                                     <label>Status</label>
                                     <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
                                         {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label>Price List (Daftar Harga)</label>
+                                    <select value={formData.price_list_id || ''}
+                                        onChange={async (e) => {
+                                            const val = e.target.value;
+                                            if (val) {
+                                                try {
+                                                    const plRes = await fetch(`/api/price-lists/${val}`, { headers: { 'Authorization': `Bearer ${getToken()}` } });
+                                                    const plData = await plRes.json();
+                                                    if (plData.success && plData.data) {
+                                                        const plDetails = plData.data.details || [];
+                                                        setSelectedPriceListDetails(plDetails);
+                                                        
+                                                        const updatedDetails = formData.details.map(d => {
+                                                            if (!d.item_id) return d;
+                                                            const plItem = plDetails.find(p => p.item_id === parseInt(d.item_id));
+                                                            if (plItem) {
+                                                                return { ...d, unit_price: parseFloat(plItem.price) || 0, discount_percent: parseFloat(plItem.discount_percent) || 0 };
+                                                            }
+                                                            return d;
+                                                        });
+                                                        setFormData(prev => ({ ...prev, price_list_id: val, details: updatedDetails }));
+                                                    } else {
+                                                        setFormData(prev => ({ ...prev, price_list_id: val }));
+                                                    }
+                                                } catch (err) { 
+                                                    console.error('Error fetching price list', err);
+                                                    setFormData(prev => ({ ...prev, price_list_id: val }));
+                                                }
+                                            } else {
+                                                setSelectedPriceListDetails([]);
+                                                const updatedDetails = formData.details.map(d => {
+                                                    if (!d.item_id) return d;
+                                                    const stdItem = items.find(i => i.id === parseInt(d.item_id));
+                                                    if (stdItem) {
+                                                        return { ...d, unit_price: parseFloat(stdItem.standard_price) || 0, discount_percent: 0 };
+                                                    }
+                                                    return d;
+                                                });
+                                                setFormData(prev => ({ ...prev, price_list_id: val, details: updatedDetails }));
+                                            }
+                                        }}
+                                        style={{ padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '6px' }}>
+                                        <option value="">-- Harga Standar --</option>
+                                        {priceLists.map(pl => (
+                                            <option key={pl.id} value={pl.id}>{pl.code} - {pl.name}</option>
+                                        ))}
                                     </select>
                                 </div>
                             </div>

@@ -81,6 +81,7 @@ export const menuItems = [
                     { id: 'exchange-rate-type', label: 'Exchange Rate Type', icon: 'repeat' },
                     { id: 'exchange-rate', label: 'Exchange Rate', icon: 'trending-up' },
                     { id: 'year-setup', label: 'Master Tahun', icon: 'calendar' },
+                    { id: 'price-list', label: 'Master Daftar Harga', icon: 'tag' },
                 ]
             },
             { id: 'transcode', label: 'Tipe Transaksi', icon: 'hash' },

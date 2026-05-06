@@ -258,8 +258,6 @@ function ARInvoiceList() {
                         shipment_id: d.shipment_id || ''
                     })),
                     tax_type: inv.tax_type || 'Exclude',
-                    sales_person_id: inv.sales_person_id || '',
-                    payment_term_id: inv.payment_term_id || '',
                     currency_code: inv.currency_code || ''
                 });
 

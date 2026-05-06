@@ -22,12 +22,15 @@ function SalesOrderList() {
         transcode_id: '',
         tax_type: 'Exclude', // 'Exclude' | 'Include' | 'No Tax'
         payment_term_id: '',
-        currency_code: ''
+        currency_code: '',
+        price_list_id: ''
     });
     const [transcodes, setTranscodes] = useState([]);
     const [paymentTerms, setPaymentTerms] = useState([]);
     const [currencies, setcurrencies] = useState([]);
     const [allowedTops, setAllowedTops] = useState([]);
+    const [priceLists, setPriceLists] = useState([]);
+    const [selectedPriceListDetails, setSelectedPriceListDetails] = useState([]);
 
     useEffect(() => {
         fetchData();
@@ -59,13 +62,14 @@ function SalesOrderList() {
 
     const fetchMasterData = async () => {
         try {
-            const [custRes, spRes, itemRes, transRes, topRes, rateRes] = await Promise.all([
+            const [custRes, spRes, itemRes, transRes, topRes, rateRes, plRes] = await Promise.all([
                 fetch('/api/partners?type=Customer'),
                 fetch('/api/salespersons'),
                 fetch('/api/items'),
                 fetch('/api/transcodes'),
                 fetch('/api/payment-terms'),
-                fetch('/api/currencies')
+                fetch('/api/currencies'),
+                fetch('/api/price-lists-active')
             ]);
             const custData = await custRes.json();
             const spData = await spRes.json();
@@ -73,6 +77,7 @@ function SalesOrderList() {
             const transData = await transRes.json();
             const topData = await topRes.json();
             const rateData = await rateRes.json();
+            const plData = await plRes.json();
 
             if (custData.success) setCustomers(custData.data);
             if (spData.success) setSalesPersons(spData.data);
@@ -84,6 +89,7 @@ function SalesOrderList() {
             }
             if (topData.success) setPaymentTerms(topData.data.filter(t => t.active === 'Y'));
             if (rateData.success) setcurrencies(rateData.data);
+            if (plData.success) setPriceLists(plData.data);
 
             // Fetch unit conversions
             try {
@@ -201,14 +207,29 @@ function SalesOrderList() {
                         item_id: d.item_id,
                         quantity: parseFloat(d.quantity),
                         unit_price: parseFloat(d.unit_price),
+                        discount_percent: parseFloat(d.discount_percent) || 0,
                         unit_code: d.detail_unit_code || d.item_base_unit || '',
                         conversion_factor: parseFloat(d.detail_conversion_factor) || 1
                     })),
                     transcode_id: so.transcode_id || '',
                     tax_type: so.tax_type || (so.ppn_included !== undefined ? (so.ppn_included ? 'Exclude' : 'No Tax') : 'Exclude'),
                     payment_term_id: so.payment_term_id || '',
-                    currency_code: so.currency_code || ''
+                    currency_code: so.currency_code || '',
+                    price_list_id: so.price_list_id || ''
                 });
+                
+                if (so.price_list_id) {
+                    try {
+                        const plRes = await fetch(`/api/price-lists/${so.price_list_id}`);
+                        const plData = await plRes.json();
+                        if (plData.success && plData.data) {
+                            setSelectedPriceListDetails(plData.data.details || []);
+                        }
+                    } catch (e) { console.error('Error fetching price list details', e); }
+                } else {
+                    setSelectedPriceListDetails([]);
+                }
+                
                 setEditingItem(id);
                 setShowForm(true);
             }
@@ -260,6 +281,38 @@ function SalesOrderList() {
         }
     };
 
+    const handleVoid = async (id) => {
+        if (!confirm('Yakin ingin mem-void Sales Order ini? Status akan menjadi Void dan tidak bisa diubah lagi.')) return;
+        try {
+            const response = await fetch(`/api/sales-orders/${id}/void`, { method: 'PUT' });
+            const data = await response.json();
+            if (data.success) {
+                alert(data.message);
+                fetchData();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        }
+    };
+
+    const handleWriteOff = async (id) => {
+        if (!confirm('Yakin ingin melakukan Write-Off pada Sales Order ini? SO akan ditutup sebagai pengiriman parsial.')) return;
+        try {
+            const response = await fetch(`/api/sales-orders/${id}/writeoff`, { method: 'PUT' });
+            const data = await response.json();
+            if (data.success) {
+                alert(data.message);
+                fetchData();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        }
+    };
+
     const handleDelete = async (id) => {
         if (!confirm('Yakin ingin menghapus Sales Order ini?')) return;
         try {
@@ -277,7 +330,7 @@ function SalesOrderList() {
     const addDetailLine = () => {
         setFormData({
             ...formData,
-            details: [...formData.details, { item_id: '', quantity: 1, unit_price: 0, unit_code: '', conversion_factor: 1 }]
+            details: [...formData.details, { item_id: '', quantity: 1, unit_price: 0, discount_percent: 0, unit_code: '', conversion_factor: 1 }]
         });
     };
 
@@ -294,7 +347,20 @@ function SalesOrderList() {
         if (field === 'item_id') {
             const item = items.find(i => i.id === parseInt(value));
             if (item) {
-                newDetails[index].unit_price = item.standard_price || 0;
+                let unitPrice = item.standard_price || 0;
+                let discountPercent = 0;
+                
+                // Cek harga dari Price List jika ada
+                if (formData.price_list_id && selectedPriceListDetails.length > 0) {
+                    const plDetail = selectedPriceListDetails.find(pl => pl.item_id === parseInt(value));
+                    if (plDetail) {
+                        unitPrice = parseFloat(plDetail.price) || unitPrice;
+                        discountPercent = parseFloat(plDetail.discount_percent) || 0;
+                    }
+                }
+                
+                newDetails[index].unit_price = unitPrice;
+                newDetails[index].discount_percent = discountPercent;
                 newDetails[index].unit_code = item.unit || '';
                 newDetails[index].conversion_factor = 1;
             }
@@ -342,8 +408,10 @@ function SalesOrderList() {
             transcode_id: '',
             tax_type: 'Exclude',
             payment_term_id: '',
-            currency_code: ''
+            currency_code: '',
+            price_list_id: ''
         });
+        setSelectedPriceListDetails([]);
     };
 
 
@@ -362,7 +430,7 @@ function SalesOrderList() {
     };
 
     const calculateSubtotal = () => {
-        return formData.details.reduce((sum, d) => sum + (d.quantity * d.unit_price), 0);
+        return formData.details.reduce((sum, d) => sum + ((d.quantity * d.unit_price) * (1 - (d.discount_percent || 0) / 100)), 0);
     };
 
     const calculatePPN = () => {
@@ -483,8 +551,6 @@ function SalesOrderList() {
                                         ))}
                                     </select>
                                 </div>
-                            </div>
-                            <div className="form-row">
                                 <div className="form-group">
                                     <label>Customer</label>
                                     <select
@@ -499,6 +565,8 @@ function SalesOrderList() {
                                         ))}
                                     </select>
                                 </div>
+                            </div>
+                            <div className="form-row">
                                 <div className="form-group">
                                     <label>Term of Payment</label>
                                     <select
@@ -511,6 +579,62 @@ function SalesOrderList() {
                                             .filter(t => allowedTops.length === 0 || allowedTops.includes(t.id))
                                             .map(t => (
                                                 <option key={t.id} value={t.id}>{t.code} - {t.name} ({t.days} hari)</option>
+                                            ))
+                                        }
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label>Price List (Daftar Harga)</label>
+                                    <select
+                                        value={formData.price_list_id}
+                                        onChange={async (e) => {
+                                            const val = e.target.value;
+                                            if (val) {
+                                                try {
+                                                    const plRes = await fetch(`/api/price-lists/${val}`);
+                                                    const plData = await plRes.json();
+                                                    if (plData.success && plData.data) {
+                                                        const plDetails = plData.data.details || [];
+                                                        setSelectedPriceListDetails(plDetails);
+                                                        
+                                                        // Update existing item prices based on the new price list
+                                                        const updatedDetails = formData.details.map(d => {
+                                                            if (!d.item_id) return d;
+                                                            const plItem = plDetails.find(p => p.item_id === parseInt(d.item_id));
+                                                            if (plItem) {
+                                                                return { ...d, unit_price: parseFloat(plItem.price) || 0, discount_percent: parseFloat(plItem.discount_percent) || 0 };
+                                                            }
+                                                            return d;
+                                                        });
+                                                        setFormData(prev => ({ ...prev, price_list_id: val, details: updatedDetails }));
+                                                    } else {
+                                                        setFormData(prev => ({ ...prev, price_list_id: val }));
+                                                    }
+                                                } catch (err) { 
+                                                    console.error('Error fetching price list', err);
+                                                    setFormData(prev => ({ ...prev, price_list_id: val }));
+                                                }
+                                            } else {
+                                                setSelectedPriceListDetails([]);
+                                                // Revert to standard prices if price list is cleared
+                                                const updatedDetails = formData.details.map(d => {
+                                                    if (!d.item_id) return d;
+                                                    const stdItem = items.find(i => i.id === parseInt(d.item_id));
+                                                    if (stdItem) {
+                                                        return { ...d, unit_price: parseFloat(stdItem.standard_price) || 0, discount_percent: 0 };
+                                                    }
+                                                    return d;
+                                                });
+                                                setFormData(prev => ({ ...prev, price_list_id: val, details: updatedDetails }));
+                                            }
+                                        }}
+                                        disabled={formData.status === 'Approved'}
+                                    >
+                                        <option value="">-- Harga Standar Master Item --</option>
+                                        {priceLists
+                                            .filter(pl => !pl.payment_term_id || pl.payment_term_id === parseInt(formData.payment_term_id))
+                                            .map(pl => (
+                                                <option key={pl.id} value={pl.id}>{pl.code} - {pl.name}</option>
                                             ))
                                         }
                                     </select>
@@ -545,6 +669,7 @@ function SalesOrderList() {
                                             <th style={{ width: '100px' }}>Qty</th>
                                             <th style={{ width: '120px' }}>Satuan</th>
                                             <th style={{ width: '150px' }}>Harga</th>
+                                            <th style={{ width: '100px' }}>Diskon (%)</th>
                                             <th style={{ width: '150px' }}>Total</th>
                                             <th style={{ width: '50px' }}></th>
                                         </tr>
@@ -631,10 +756,23 @@ function SalesOrderList() {
                                                             value={detail.unit_price}
                                                             onChange={(e) => updateDetailLine(idx, 'unit_price', parseFloat(e.target.value) || 0)}
                                                             disabled={formData.status === 'Approved'}
+                                                            style={{ width: '100%' }}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="100"
+                                                            step="0.01"
+                                                            value={detail.discount_percent || 0}
+                                                            onChange={(e) => updateDetailLine(idx, 'discount_percent', parseFloat(e.target.value) || 0)}
+                                                            disabled={formData.status === 'Approved'}
+                                                            style={{ width: '100%' }}
                                                         />
                                                     </td>
                                                     <td style={{ textAlign: 'right' }}>
-                                                        {formatCurrency(detail.quantity * detail.unit_price)}
+                                                        {formatCurrency((detail.quantity * detail.unit_price) * (1 - (detail.discount_percent || 0)/100))}
                                                     </td>
                                                     <td>
                                                         {formData.status !== 'Approved' && (
@@ -651,21 +789,21 @@ function SalesOrderList() {
                                             return (
                                                 <>
                                                     <tr>
-                                                        <td colSpan="3" style={{ textAlign: 'right' }}>{display.subtotalLabel}:</td>
+                                                        <td colSpan="4" style={{ textAlign: 'right' }}>{display.subtotalLabel}:</td>
                                                         <td style={{ textAlign: 'right' }}>{formatCurrency(display.subtotalValue)}</td>
                                                         <td></td>
                                                     </tr>
 
                                                     {display.taxBaseLabel && (
                                                         <tr>
-                                                            <td colSpan="3" style={{ textAlign: 'right', color: '#666' }}>{display.taxBaseLabel}:</td>
+                                                            <td colSpan="4" style={{ textAlign: 'right', color: '#666' }}>{display.taxBaseLabel}:</td>
                                                             <td style={{ textAlign: 'right', color: '#666' }}>{formatCurrency(display.taxBaseValue)}</td>
                                                             <td></td>
                                                         </tr>
                                                     )}
 
                                                     <tr>
-                                                        <td colSpan="3" style={{ textAlign: 'right' }}>
+                                                        <td colSpan="4" style={{ textAlign: 'right' }}>
                                                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
                                                                 Pajak (PPN 11%):
                                                                 <select
@@ -685,7 +823,7 @@ function SalesOrderList() {
                                                     </tr>
 
                                                     <tr style={{ fontWeight: 'bold', backgroundColor: '#f5f5f5' }}>
-                                                        <td colSpan="3" style={{ textAlign: 'right' }}>Grand Total:</td>
+                                                        <td colSpan="4" style={{ textAlign: 'right' }}>Grand Total:</td>
                                                         <td style={{ textAlign: 'right' }}>{formatCurrency(calculateGrandTotal())}</td>
                                                         <td></td>
                                                     </tr>
@@ -745,7 +883,7 @@ function SalesOrderList() {
                                         <td>{order.salesperson_name || '-'}</td>
                                         <td style={{ textAlign: 'right' }}>{formatCurrency(order.total_amount)}</td>
                                         <td>
-                                            <span className={`badge ${order.status === 'Draft' ? 'badge-warning' : order.status === 'Approved' ? 'badge-success' : 'badge-info'}`}>
+                                            <span className={`badge ${order.status === 'Draft' ? 'badge-warning' : order.status === 'Approved' ? 'badge-success' : order.status === 'Void' ? 'badge-danger' : order.status === 'Write-Off' ? 'badge-secondary' : 'badge-info'}`}>
                                                 {order.status}
                                             </span>
                                         </td>
@@ -754,24 +892,18 @@ function SalesOrderList() {
                                                 <>
                                                     <button className="btn-icon" onClick={() => handleApprove(order.id)} title="Approve" style={{ color: 'green', marginRight: '5px' }}>✅</button>
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Edit" style={{ marginRight: '5px' }}>✏️</button>
+                                                    <button className="btn-icon" onClick={() => handleVoid(order.id)} title="Void" style={{ color: 'red', marginRight: '5px' }}>🚫</button>
                                                     <button className="btn-icon" onClick={() => handleDelete(order.id)} title="Hapus">🗑️</button>
+                                                </>
+                                            ) : order.status === 'Approved' ? (
+                                                <>
+                                                    <button className="btn-icon" onClick={() => handleUnapprove(order.id)} title="Unapprove" style={{ color: 'orange', marginRight: '5px' }}>🔓</button>
+                                                    <button className="btn-icon" onClick={() => handleWriteOff(order.id)} title="Write-Off (Selesai Parsial)" style={{ color: 'gray', marginRight: '5px' }}>✂️</button>
+                                                    <button className="btn-icon" onClick={() => handleVoid(order.id)} title="Void" style={{ color: 'red', marginRight: '5px' }}>🚫</button>
+                                                    <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button
-                                                        className="btn-icon"
-                                                        onClick={() => order.status !== 'Closed' && handleUnapprove(order.id)}
-                                                        title={order.status === 'Closed' ? "Closed - Cannot Unapprove" : "Unapprove"}
-                                                        style={{
-                                                            color: 'orange',
-                                                            marginRight: '5px',
-                                                            opacity: order.status === 'Closed' ? 0.3 : 1,
-                                                            cursor: order.status === 'Closed' ? 'not-allowed' : 'pointer'
-                                                        }}
-                                                        disabled={order.status === 'Closed'}
-                                                    >
-                                                        🔓
-                                                    </button>
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
                                                 </>
                                             )}

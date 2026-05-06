@@ -164,7 +164,6 @@ function PurchaseOrderList() {
                         unit_price: parseFloat(d.unit_price)
                     })),
                     transcode_id: po.transcode_id || '',
-                    transcode_id: po.transcode_id || '',
                     tax_type: po.tax_type || (po.ppn_included !== undefined ? (po.ppn_included ? 'Exclude' : 'No Tax') : 'Exclude'),
                     payment_term_id: po.payment_term_id || '',
                     currency_code: po.currency_code || ''

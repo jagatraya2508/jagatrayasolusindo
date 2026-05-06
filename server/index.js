@@ -3382,8 +3382,8 @@ app.get('/api/sales-orders/:id', async (req, res) => {
 
 app.post('/api/sales-orders', async (req, res) => {
   try {
-    const { doc_number, doc_date, partner_id, salesperson_id, status, details, transcode_id, payment_term_id, tax_type, currency_code } = req.body;
-    const total = details?.reduce((sum, d) => sum + (d.quantity * d.unit_price), 0) || 0;
+    const { doc_number, doc_date, partner_id, salesperson_id, status, details, transcode_id, payment_term_id, tax_type, currency_code, price_list_id } = req.body;
+    const total = details?.reduce((sum, d) => sum + ((d.quantity * d.unit_price) * (1 - (d.discount_percent || 0)/100)), 0) || 0;
 
     // Validate Financial Limits
     const financialValid = await validatePartnerFinancials(partner_id, total, payment_term_id);
@@ -3393,8 +3393,8 @@ app.post('/api/sales-orders', async (req, res) => {
 
 
     await executeQuery(
-      'INSERT INTO SalesOrders (doc_number, doc_date, partner_id, sales_person_id, status, total_amount, transcode_id, payment_term_id, tax_type, currency_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [doc_number, doc_date, partner_id, salesperson_id, status || 'Draft', total, transcode_id || null, payment_term_id || null, tax_type || 'Exclude', currency_code || null]
+      'INSERT INTO SalesOrders (doc_number, doc_date, partner_id, sales_person_id, status, total_amount, transcode_id, payment_term_id, tax_type, currency_code, price_list_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [doc_number, doc_date, partner_id, salesperson_id, status || 'Draft', total, transcode_id || null, payment_term_id || null, tax_type || 'Exclude', currency_code || null, price_list_id || null]
     );
 
     const soResult = await executeQuery('SELECT * FROM SalesOrders WHERE doc_number = ?', [doc_number]);
@@ -3405,8 +3405,8 @@ app.post('/api/sales-orders', async (req, res) => {
         const convFactor = parseFloat(d.conversion_factor) || 1;
         const baseQty = d.quantity * convFactor;
         await executeQuery(
-          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [soId, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price, d.unit_code || null, convFactor, baseQty]
+          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, discount_percent, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [soId, d.item_id, d.quantity, d.unit_price, d.discount_percent || 0, (d.quantity * d.unit_price) * (1 - (d.discount_percent || 0)/100), d.unit_code || null, convFactor, baseQty]
         );
       }
     }
@@ -3419,12 +3419,12 @@ app.post('/api/sales-orders', async (req, res) => {
 
 app.put('/api/sales-orders/:id', async (req, res) => {
   try {
-    const { doc_number, doc_date, partner_id, salesperson_id, status, details, transcode_id, payment_term_id, tax_type, currency_code } = req.body;
-    const total = details?.reduce((sum, d) => sum + (d.quantity * d.unit_price), 0) || 0;
+    const { doc_number, doc_date, partner_id, salesperson_id, status, details, transcode_id, payment_term_id, tax_type, currency_code, price_list_id } = req.body;
+    const total = details?.reduce((sum, d) => sum + ((d.quantity * d.unit_price) * (1 - (d.discount_percent || 0)/100)), 0) || 0;
 
     await executeQuery(
-      'UPDATE SalesOrders SET doc_number = ?, doc_date = ?, partner_id = ?, sales_person_id = ?, status = ?, total_amount = ?, transcode_id = ?, payment_term_id = ?, tax_type = ?, currency_code = ? WHERE id = ?',
-      [doc_number, doc_date, partner_id, salesperson_id, status, total, transcode_id, payment_term_id || null, tax_type || 'Exclude', currency_code || null, req.params.id]
+      'UPDATE SalesOrders SET doc_number = ?, doc_date = ?, partner_id = ?, sales_person_id = ?, status = ?, total_amount = ?, transcode_id = ?, payment_term_id = ?, tax_type = ?, currency_code = ?, price_list_id = ? WHERE id = ?',
+      [doc_number, doc_date, partner_id, salesperson_id, status, total, transcode_id, payment_term_id || null, tax_type || 'Exclude', currency_code || null, price_list_id || null, req.params.id]
     );
 
     await executeQuery('DELETE FROM SalesOrderDetails WHERE so_id = ?', [req.params.id]);
@@ -3433,8 +3433,8 @@ app.put('/api/sales-orders/:id', async (req, res) => {
         const convFactor = parseFloat(d.conversion_factor) || 1;
         const baseQty = d.quantity * convFactor;
         await executeQuery(
-          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [req.params.id, d.item_id, d.quantity, d.unit_price, d.quantity * d.unit_price, d.unit_code || null, convFactor, baseQty]
+          'INSERT INTO SalesOrderDetails (so_id, item_id, quantity, unit_price, discount_percent, line_total, unit_code, conversion_factor, base_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [req.params.id, d.item_id, d.quantity, d.unit_price, d.discount_percent || 0, (d.quantity * d.unit_price) * (1 - (d.discount_percent || 0)/100), d.unit_code || null, convFactor, baseQty]
         );
       }
     }
@@ -3469,6 +3469,43 @@ app.put('/api/sales-orders/:id/unapprove', async (req, res) => {
     // Post: Unapprove Sales Order
     await executeQuery('UPDATE SalesOrders SET status = ? WHERE id = ?', ['Draft', req.params.id]);
     res.json({ success: true, message: 'Sales Order berhasil di-unapprove (Kembali ke Draft)' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+app.put('/api/sales-orders/:id/void', async (req, res) => {
+  try {
+    const soStatus = await executeQuery("SELECT status FROM SalesOrders WHERE id = ?", [req.params.id]);
+    if (soStatus.length === 0) return res.status(404).json({ success: false, message: 'SO tidak ditemukan' });
+    if (soStatus[0].status === 'Closed' || soStatus[0].status === 'Void') {
+      return res.status(400).json({ success: false, message: 'Tidak dapat mem-void SO dengan status Closed atau sudah Void.' });
+    }
+
+    const hasShipment = await executeQuery("SELECT COUNT(*) as count FROM Shipments WHERE so_id = ? AND status <> ?", [req.params.id, 'Cancelled']);
+    if (hasShipment[0].count > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tidak dapat mem-void SO karena sudah ada pengiriman (Shipment) yang terhubung. Hapus/Void Shipment terlebih dahulu.'
+      });
+    }
+
+    await executeQuery('UPDATE SalesOrders SET status = ? WHERE id = ?', ['Void', req.params.id]);
+    res.json({ success: true, message: 'Sales Order berhasil di-void.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/sales-orders/:id/writeoff', async (req, res) => {
+  try {
+    const soStatus = await executeQuery("SELECT status FROM SalesOrders WHERE id = ?", [req.params.id]);
+    if (soStatus.length === 0) return res.status(404).json({ success: false, message: 'SO tidak ditemukan' });
+    if (soStatus[0].status !== 'Approved') {
+      return res.status(400).json({ success: false, message: 'Write-off hanya dapat dilakukan pada SO dengan status Approved.' });
+    }
+
+    await executeQuery('UPDATE SalesOrders SET status = ? WHERE id = ?', ['Write-Off', req.params.id]);
+    res.json({ success: true, message: 'Sales Order berhasil di-write-off.' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -9329,14 +9366,14 @@ app.get('/api/crm/quotations/:id', authenticateToken, async (req, res) => {
 
 app.post('/api/crm/quotations', authenticateToken, async (req, res) => {
   try {
-    const { opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, items } = req.body;
+    const { opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, items, price_list_id } = req.body;
     const countResult = await executeQuery("SELECT COUNT(*) as cnt FROM CrmQuotations");
     const nextNum = (countResult[0].cnt || 0) + 1;
     const quot_no = 'QUO-' + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(nextNum).padStart(4, '0');
 
     await executeQuery(
-      'INSERT INTO CrmQuotations (quot_no, opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [quot_no, opportunity_id || null, customer_id || null, customer_name || '', quotation_date, valid_until || null, subtotal || 0, discount_pct || 0, discount_amount || 0, tax_pct || 0, tax_amount || 0, total || 0, currency_code || 'IDR', status || 'Draft', notes || '', req.user.username || '']
+      'INSERT INTO CrmQuotations (quot_no, opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, created_by, price_list_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [quot_no, opportunity_id || null, customer_id || null, customer_name || '', quotation_date, valid_until || null, subtotal || 0, discount_pct || 0, discount_amount || 0, tax_pct || 0, tax_amount || 0, total || 0, currency_code || 'IDR', status || 'Draft', notes || '', req.user.username || '', price_list_id || null]
     );
 
     // Get new quotation id
@@ -9360,11 +9397,11 @@ app.post('/api/crm/quotations', authenticateToken, async (req, res) => {
 
 app.put('/api/crm/quotations/:id', authenticateToken, async (req, res) => {
   try {
-    const { opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, items } = req.body;
+    const { opportunity_id, customer_id, customer_name, quotation_date, valid_until, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, items, price_list_id } = req.body;
 
     await executeQuery(
-      'UPDATE CrmQuotations SET opportunity_id = ?, customer_id = ?, customer_name = ?, quotation_date = ?, valid_until = ?, subtotal = ?, discount_pct = ?, discount_amount = ?, tax_pct = ?, tax_amount = ?, total = ?, currency_code = ?, status = ?, notes = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?',
-      [opportunity_id || null, customer_id || null, customer_name, quotation_date, valid_until || null, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, req.params.id]
+      'UPDATE CrmQuotations SET opportunity_id = ?, customer_id = ?, customer_name = ?, quotation_date = ?, valid_until = ?, subtotal = ?, discount_pct = ?, discount_amount = ?, tax_pct = ?, tax_amount = ?, total = ?, currency_code = ?, status = ?, notes = ?, updated_at = CURRENT TIMESTAMP, price_list_id = ? WHERE id = ?',
+      [opportunity_id || null, customer_id || null, customer_name, quotation_date, valid_until || null, subtotal, discount_pct, discount_amount, tax_pct, tax_amount, total, currency_code, status, notes, price_list_id || null, req.params.id]
     );
 
     // Replace items
@@ -9983,6 +10020,116 @@ app.get('/api/pos/test', async (req, res) => {
     const { executeQuery: posQuery } = await import('./pos/db.js');
     const result = await posQuery('SELECT 1 as test');
     res.json({ success: true, message: 'JAGATRAYA POS Module - Database connected!', data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== PRICE LISTS ====================
+app.get('/api/price-lists', authenticateToken, async (req, res) => {
+  try {
+    const result = await executeQuery(`
+      SELECT p.*, pt.name as payment_term_name 
+      FROM PriceLists p
+      LEFT JOIN PaymentTerms pt ON p.payment_term_id = pt.id
+      ORDER BY p.code
+    `);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/price-lists/:id', async (req, res) => {
+  try {
+    const pricelists = await executeQuery('SELECT * FROM PriceLists WHERE id = ?', [req.params.id]);
+    if (pricelists.length === 0) return res.status(404).json({ success: false, error: 'Price List not found' });
+    
+    const details = await executeQuery(`
+      SELECT pd.*, i.code as item_code, i.name as item_name
+      FROM PriceListDetails pd
+      JOIN Items i ON pd.item_id = i.id
+      WHERE pd.price_list_id = ?
+    `, [req.params.id]);
+    
+    res.json({ success: true, data: { ...pricelists[0], details } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/price-lists', authenticateToken, async (req, res) => {
+  try {
+    const { code, name, currency_code, payment_term_id, valid_from, valid_to, active, remarks, details } = req.body;
+    
+    await executeQuery(
+      'INSERT INTO PriceLists (code, name, currency_code, payment_term_id, valid_from, valid_to, active, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [code, name, currency_code || null, payment_term_id || null, valid_from || null, valid_to || null, active || 'Y', remarks || null]
+    );
+    
+    const priceListResult = await executeQuery('SELECT id FROM PriceLists WHERE code = ?', [code]);
+    const priceListId = priceListResult[0].id;
+    
+    if (details && details.length > 0) {
+      for (const d of details) {
+        await executeQuery(
+          'INSERT INTO PriceListDetails (price_list_id, item_id, unit_id, price, discount_percent, min_qty) VALUES (?, ?, ?, ?, ?, ?)',
+          [priceListId, d.item_id, d.unit_id || null, d.price || 0, d.discount_percent || 0, d.min_qty || 0]
+        );
+      }
+    }
+    res.json({ success: true, message: 'Price List berhasil dibuat' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/price-lists/:id', authenticateToken, async (req, res) => {
+  try {
+    const { code, name, currency_code, payment_term_id, valid_from, valid_to, active, remarks, details } = req.body;
+    
+    await executeQuery(
+      'UPDATE PriceLists SET code = ?, name = ?, currency_code = ?, payment_term_id = ?, valid_from = ?, valid_to = ?, active = ?, remarks = ? WHERE id = ?',
+      [code, name, currency_code || null, payment_term_id || null, valid_from || null, valid_to || null, active || 'Y', remarks || null, req.params.id]
+    );
+    
+    await executeQuery('DELETE FROM PriceListDetails WHERE price_list_id = ?', [req.params.id]);
+    
+    if (details && details.length > 0) {
+      for (const d of details) {
+        await executeQuery(
+          'INSERT INTO PriceListDetails (price_list_id, item_id, unit_id, price, discount_percent, min_qty) VALUES (?, ?, ?, ?, ?, ?)',
+          [req.params.id, d.item_id, d.unit_id || null, d.price || 0, d.discount_percent || 0, d.min_qty || 0]
+        );
+      }
+    }
+    res.json({ success: true, message: 'Price List berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/price-lists/:id', authenticateToken, async (req, res) => {
+  try {
+    await executeQuery('DELETE FROM PriceListDetails WHERE price_list_id = ?', [req.params.id]);
+    await executeQuery('DELETE FROM PriceLists WHERE id = ?', [req.params.id]);
+    res.json({ success: true, message: 'Price List berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/price-lists-active', async (req, res) => {
+  try {
+    const { payment_term_id } = req.query;
+    let query = "SELECT * FROM PriceLists WHERE active = 'Y' AND (valid_from IS NULL OR valid_from <= CURRENT DATE) AND (valid_to IS NULL OR valid_to >= CURRENT DATE)";
+    let params = [];
+    if (payment_term_id) {
+        query += " AND (payment_term_id IS NULL OR payment_term_id = ?)";
+        params.push(payment_term_id);
+    }
+    const result = await executeQuery(query, params);
+    res.json({ success: true, data: result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

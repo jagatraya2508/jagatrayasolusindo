@@ -36,6 +36,7 @@ import CurrencyList from './pages/master/CurrencyList';
 import ExchangeRateTypeList from './pages/master/ExchangeRateTypeList';
 import ExchangeRateList from './pages/master/ExchangeRateList';
 import YearSetupList from './pages/master/YearSetupList';
+import PriceList from './pages/master/PriceList';
 import POOutstandingReport from './pages/report/POOutstandingReport';
 import SOOutstandingReport from './pages/report/SOOutstandingReport';
 import ReceivingOutstandingReport from './pages/report/ReceivingOutstandingReport';
@@ -240,6 +241,8 @@ function AppContent() {
                 return <ExchangeRateTypeList />;
             case 'exchange-rate':
                 return <ExchangeRateList />;
+            case 'price-list':
+                return <PriceList />;
             case 'report/sales-summary':
                 return <SalesReport />;
             case 'report/purchase-summary':
