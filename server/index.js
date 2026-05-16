@@ -332,8 +332,8 @@ app.post('/api/roles', authenticateToken, async (req, res) => {
     if (permissions && permissions.length > 0) {
       for (const p of permissions) {
         await executeQuery(
-          'INSERT INTO RolePermissions (role_id, feature_key, can_view, can_create, can_edit, can_delete, can_print) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [roleId, p.feature_key, p.can_view || 'N', p.can_create || 'N', p.can_edit || 'N', p.can_delete || 'N', p.can_print || 'N']
+          'INSERT INTO RolePermissions (role_id, feature_key, can_view, can_create, can_edit, can_delete, can_print, can_approve, can_post) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [roleId, p.feature_key, p.can_view || 'N', p.can_create || 'N', p.can_edit || 'N', p.can_delete || 'N', p.can_print || 'N', p.can_approve || 'N', p.can_post || 'N']
         );
       }
     }
@@ -355,8 +355,8 @@ app.put('/api/roles/:id', authenticateToken, async (req, res) => {
     if (permissions && permissions.length > 0) {
       for (const p of permissions) {
         await executeQuery(
-          'INSERT INTO RolePermissions (role_id, feature_key, can_view, can_create, can_edit, can_delete, can_print) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [req.params.id, p.feature_key, p.can_view || 'N', p.can_create || 'N', p.can_edit || 'N', p.can_delete || 'N', p.can_print || 'N']
+          'INSERT INTO RolePermissions (role_id, feature_key, can_view, can_create, can_edit, can_delete, can_print, can_approve, can_post) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [req.params.id, p.feature_key, p.can_view || 'N', p.can_create || 'N', p.can_edit || 'N', p.can_delete || 'N', p.can_print || 'N', p.can_approve || 'N', p.can_post || 'N']
         );
       }
     }
@@ -381,14 +381,14 @@ let isConnected = false;
 
 async function connectDatabase() {
   try {
-    console.log('🔄 Mencoba koneksi ke database...');
+    console.log('ðŸ”„ Mencoba koneksi ke database...');
     dbPool = await odbc.pool(connectionString);
     isConnected = true;
-    console.log('✅ Koneksi ke database Sybase berhasil!');
+    console.log('âœ… Koneksi ke database Sybase berhasil!');
     return true;
   } catch (error) {
     isConnected = false;
-    console.error('❌ Gagal koneksi ke database:', error.message);
+    console.error('âŒ Gagal koneksi ke database:', error.message);
     return false;
   }
 }
@@ -1895,7 +1895,6 @@ app.post('/api/partners', async (req, res) => {
     }
     res.json({ success: true, data: result[0], message: 'Partner berhasil ditambahkan' });
   } catch (error) {
-    const fs = require('fs');
     fs.writeFileSync('partner_error.log', JSON.stringify(error, Object.getOwnPropertyNames(error), 2) + '\n\nCode was: ' + code);
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1950,7 +1949,16 @@ app.get('/api/shipments', async (req, res) => {
                 so.doc_number as so_number,
                 p.name as partner_name,
                 (SELECT SUM(quantity) FROM ShipmentDetails WHERE shipment_id = s.id) as total_shipped,
-                (SELECT SUM(quantity) FROM ARInvoiceDetails ard JOIN ARInvoices ari ON ard.ar_invoice_id = ari.id WHERE ari.shipment_id = s.id AND ari.status != 'Cancelled') as total_billed
+                (SELECT SUM(quantity) FROM ARInvoiceDetails ard JOIN ARInvoices ari ON ard.ar_invoice_id = ari.id WHERE ari.shipment_id = s.id AND ari.status != 'Cancelled') as total_billed,
+                (SELECT LIST(ari2.doc_number, ', ') FROM ARInvoices ari2 WHERE ari2.shipment_id = s.id AND ari2.status != 'Cancelled') as ar_invoice_numbers,
+                (SELECT LIST(ari3.status, ', ') FROM ARInvoices ari3 WHERE ari3.shipment_id = s.id AND ari3.status != 'Cancelled') as ar_invoice_statuses,
+                (SELECT SUM(ari4.paid_amount) FROM ARInvoices ari4 WHERE ari4.shipment_id = s.id AND ari4.status != 'Cancelled') as total_paid,
+                (SELECT LIST(DISTINCT jv.doc_number, ', ')
+                 FROM ARInvoices ari5
+                 JOIN JournalVoucherDetails jvd ON jvd.ref_id = ari5.id AND jvd.ref_type = 'AR' AND jvd.credit > 0
+                 JOIN JournalVouchers jv ON jvd.jv_id = jv.id
+                 WHERE ari5.shipment_id = s.id AND ari5.status != 'Cancelled'
+                ) as payment_doc_numbers
             FROM Shipments s
             LEFT JOIN SalesOrders so ON s.so_id = so.id
             LEFT JOIN Partners p ON so.partner_id = p.id
@@ -1979,8 +1987,8 @@ app.post('/api/shipments', async (req, res) => {
     console.log('Creating Shipment:', req.body);
 
     await executeQuery(
-      'INSERT INTO Shipments (doc_number, doc_date, so_id, partner_id, status, notes, transcode_id, currency_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [doc_number, doc_date, so_id || null, partner_id, status || 'Draft', notes || null, transcode_id || null, currency_code || null]
+      'INSERT INTO Shipments (doc_number, doc_date, so_id, partner_id, status, notes, transcode_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [doc_number, doc_date, so_id || null, partner_id, status || 'Draft', notes || null, transcode_id || null]
     );
 
     const result = await executeQuery('SELECT * FROM Shipments WHERE doc_number = ?', [doc_number]);
@@ -2011,8 +2019,8 @@ app.put('/api/shipments/:id', async (req, res) => {
     const { doc_number, doc_date, so_id, partner_id, status, notes, items, transcode_id, currency_code } = req.body;
 
     await executeQuery(
-      'UPDATE Shipments SET doc_number = ?, doc_date = ?, so_id = ?, partner_id = ?, status = ?, notes = ?, transcode_id = ?, currency_code = ? WHERE id = ?',
-      [doc_number, doc_date, so_id || null, partner_id, status, notes, transcode_id || null, currency_code || null, req.params.id]
+      'UPDATE Shipments SET doc_number = ?, doc_date = ?, so_id = ?, partner_id = ?, status = ?, notes = ?, transcode_id = ? WHERE id = ?',
+      [doc_number, doc_date, so_id || null, partner_id, status, notes, transcode_id || null, req.params.id]
     );
 
     await executeQuery('DELETE FROM ShipmentDetails WHERE shipment_id = ?', [req.params.id]);
@@ -2036,22 +2044,58 @@ app.put('/api/shipments/:id', async (req, res) => {
   }
 });
 
-app.put('/api/shipments/:id/approve', async (req, res) => {
+// Approve (Advance Workflow only - no journal/stock)
+app.put('/api/shipments/:id/approve', authenticateToken, async (req, res) => {
   try {
     const shId = req.params.id;
-    await executeQuery('UPDATE Shipments SET status = ? WHERE id = ?', ['Approved', shId]);
+    const shData = await executeQuery('SELECT doc_number, doc_date, current_approval_level, status FROM Shipments WHERE id = ?', [shId]);
+    if (shData.length === 0) return res.status(404).json({ success: false, error: 'Shipment tidak ditemukan' });
+    const currentLevel = parseInt(shData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'shipment', 0, currentLevel, 'approve');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery('UPDATE Shipments SET status = ?, current_approval_level = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?', [newStatus, newLevel, req.user.id, shId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('shipment', parseInt(shId), shData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Shipment berhasil di-approve (Final)' : `Shipment disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    console.error('Error approving shipment:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Post (Create Journal - only from Approved)
+app.put('/api/shipments/:id/post', authenticateToken, async (req, res) => {
+  try {
+    const shId = req.params.id;
+    const shData = await executeQuery('SELECT doc_number, doc_date, status, so_id FROM Shipments WHERE id = ?', [shId]);
+    if (shData.length === 0) return res.status(404).json({ success: false, error: 'Shipment tidak ditemukan' });
+    if (shData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Hanya dokumen Approved yang bisa di-post' });
+
+    const approvalCheck = await canUserApprove(req.user.id, 'shipment', 0, 99, 'approve');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'Anda tidak memiliki izin untuk mem-post shipment ini' });
+    }
 
     // ================== AUTOMATED JOURNAL (SHIPMENT) ==================
-    // Debit: Uninvoice Shipment
-    // Credit: Penjualan Temporary
-
     try {
-      const uninvoiceShipmentAcc = await getGlAccount('uninvoice_shipment_account');
-      const salesTempAcc = await getGlAccount('sales_temp_account');
+      // Check if journal already exists (prevent duplicates on retry)
+      const existingJV = await executeQuery("SELECT id FROM JournalVouchers WHERE source_type = 'Shipment' AND ref_id = ?", [shId]);
+      if (existingJV.length === 0) {
+        const uninvoiceShipmentAcc = await getGlAccount('uninvoice_shipment_account');
+        const salesTempAcc = await getGlAccount('sales_temp_account');
 
-      if (uninvoiceShipmentAcc && salesTempAcc) {
-        // Get Data (Qty * Price from SO)
-        const items = await executeQuery(`
+        if (uninvoiceShipmentAcc && salesTempAcc) {
+          const items = await executeQuery(`
                 SELECT sd.quantity, sod.unit_price, (sd.quantity * sod.unit_price) as total_value
                 FROM ShipmentDetails sd
                 JOIN Shipments s ON sd.shipment_id = s.id
@@ -2059,32 +2103,110 @@ app.put('/api/shipments/:id/approve', async (req, res) => {
                 WHERE s.id = ?
             `, [shId]);
 
-        const totalAmount = items.reduce((sum, item) => sum + (Number(item.total_value) || 0), 0);
+          const totalAmount = items.reduce((sum, item) => sum + (Number(item.total_value) || 0), 0);
 
-        if (totalAmount > 0) {
-          const shDoc = await executeQuery('SELECT doc_number, doc_date FROM Shipments WHERE id = ?', [shId]);
-
-          await createAutomatedJournal('Shipment', shId, shDoc[0].doc_number, shDoc[0].doc_date, [
-            { coa_id: uninvoiceShipmentAcc, debit: totalAmount, credit: 0, description: 'Uninvoiced Shipment' },
-            { coa_id: salesTempAcc, debit: 0, credit: totalAmount, description: 'Sales Temporary' }
-          ]);
+          if (totalAmount > 0) {
+            await createAutomatedJournal('Shipment', shId, shData[0].doc_number, shData[0].doc_date, [
+              { coa_id: uninvoiceShipmentAcc, debit: totalAmount, credit: 0, description: 'Uninvoiced Shipment' },
+              { coa_id: salesTempAcc, debit: 0, credit: totalAmount, description: 'Sales Temporary' }
+            ]);
+          }
         }
+      } else {
+        console.log(`Journal already exists for Shipment #${shId}, skipping...`);
       }
     } catch (jErr) {
       console.error('Failed to generate shipment journal:', jErr);
     }
 
-    res.json({ success: true, message: 'Shipment berhasil di-approve' });
+    await executeQuery('UPDATE Shipments SET status = ? WHERE id = ?', ['Posted', shId]);
+
+    res.json({ success: true, message: 'Shipment berhasil di-post' });
   } catch (error) {
-    console.error('Error approving shipment:', error);
+    console.error('Error posting shipment:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/shipments/:id/unapprove', async (req, res) => {
+// Unpost (Revert Journal - back to Approved)
+app.put('/api/shipments/:id/unpost', authenticateToken, async (req, res) => {
   try {
-    await executeQuery('UPDATE Shipments SET status = ? WHERE id = ?', ['Draft', req.params.id]);
-    res.json({ success: true, message: 'Shipment berhasil di-unapprove (Kembali ke Draft)' });
+    const shId = req.params.id;
+    const shData = await executeQuery('SELECT doc_number, status FROM Shipments WHERE id = ?', [shId]);
+    if (shData.length === 0) return res.status(404).json({ success: false, error: 'Shipment tidak ditemukan' });
+    if (shData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted can be unposted' });
+
+    // Check for linked AR Invoices
+    const linkedInvoices = await executeQuery(
+      "SELECT id, doc_number, status, total_amount, paid_amount FROM ARInvoices WHERE shipment_id = ? AND status != 'Cancelled'",
+      [shId]
+    );
+    if (linkedInvoices.length > 0) {
+      const invoiceInfo = linkedInvoices.map(inv => {
+        const paid = parseFloat(inv.paid_amount) || 0;
+        const total = parseFloat(inv.total_amount) || 0;
+        let payInfo = '';
+        if (paid > 0) payInfo = ` (Terbayar: ${paid.toLocaleString('id-ID')} dari ${total.toLocaleString('id-ID')})`;
+        return `${inv.doc_number} [${inv.status}]${payInfo}`;
+      }).join(', ');
+      return res.status(400).json({
+        success: false,
+        error: `Tidak bisa unpost. Shipment ini sudah memiliki tagihan: ${invoiceInfo}. Hapus/batalkan tagihan terlebih dahulu.`
+      });
+    }
+
+    const approvalCheck = await canUserApprove(req.user.id, 'shipment', 0, 99, 'unapprove');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'Anda tidak memiliki izin untuk meng-unpost shipment ini' });
+    }
+
+    // ================== DELETE AUTOMATED JOURNAL ==================
+    try {
+      const checkJurnal = await executeQuery('SELECT id FROM JournalVouchers WHERE source_type = ? AND ref_id = ?', ['Shipment', shId]);
+      if (checkJurnal.length > 0) {
+        const jvId = checkJurnal[0].id;
+        await executeQuery('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
+        await executeQuery('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
+        console.log(`âœ… Automated Journal deleted for Shipment #${shId}`);
+      }
+    } catch (jErr) {
+      console.error('Failed to delete shipment journal:', jErr);
+    }
+
+    await executeQuery('UPDATE Shipments SET status = ? WHERE id = ?', ['Approved', shId]);
+
+    res.json({ success: true, message: 'Shipment berhasil di-unpost (Kembali ke Approved)' });
+  } catch (error) {
+    console.error('Error unposting shipment:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Unapprove (Revert Workflow - back towards Draft)
+app.put('/api/shipments/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const shId = req.params.id;
+    const shData = await executeQuery('SELECT doc_number, current_approval_level, status FROM Shipments WHERE id = ?', [shId]);
+    if (shData.length === 0) return res.status(404).json({ success: false, error: 'Shipment tidak ditemukan' });
+    if (shData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted shipment. Unpost it first.' });
+
+    const currentLevel = parseInt(shData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'shipment', 0, currentLevel, 'unapprove');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery('UPDATE Shipments SET status = ?, current_approval_level = ?, approved_by = NULL, approved_at = NULL WHERE id = ?', [newStatus, newLevel, shId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('shipment', parseInt(shId), shData[0].doc_number || '', 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Shipment kembali ke Draft' : `Shipment turun ke ${newStatus}` });
   } catch (error) {
     console.error('Error unapproving shipment:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -2116,71 +2238,6 @@ app.delete('/api/shipments/:id', async (req, res) => {
 });
 
 // ==================== RECEIVINGS ====================
-app.put('/api/receivings/:id/approve', async (req, res) => {
-  try {
-    const rxId = req.params.id;
-    await executeQuery('UPDATE Receivings SET status = ? WHERE id = ?', ['Approved', rxId]);
-
-    // ================== AUTOMATED JOURNAL (RECEIVING) ==================
-    // Debit: Persediaan (Inventory)
-    // Credit: Hutang Dagang Temporary (AP Temporary)
-
-    try {
-      logDebug(`Attempting Journal for Receiving #${rxId}`);
-      // 1. Get Accounts
-      const inventoryAcc = await getGlAccount('inventory_account');
-      const apTempAcc = await getGlAccount('ap_temp_account');
-      logDebug(`Accounts: Inv=${inventoryAcc}, AP=${apTempAcc}`);
-
-      if (inventoryAcc && apTempAcc) {
-        // 2. Get Data (Qty * Unit Price)
-        const items = await executeQuery(`
-                -- Receivings (Prioritize rd.unit_price, then pod.unit_price)
-                SELECT
-                    rd.item_id,
-                    rd.quantity,
-                    COALESCE(rd.unit_price, pod.unit_price, 0) as cost,
-                    r.warehouse_id,
-                    r.doc_date,
-                    (rd.quantity * COALESCE(rd.unit_price, pod.unit_price, 0)) as total_value
-                FROM ReceivingDetails rd
-                JOIN Receivings r ON rd.receiving_id = r.id
-                JOIN PurchaseOrderDetails pod ON r.po_id = pod.po_id AND rd.item_id = pod.item_id
-                WHERE r.id = ?
-            `, [rxId]);
-
-        logDebug(`Items found: ${JSON.stringify(items)}`);
-
-        const totalAmount = items.reduce((sum, item) => sum + (Number(item.total_value) || 0), 0);
-        logDebug(`Total Amount: ${totalAmount}`);
-
-        if (totalAmount > 0) {
-          // 3. Create Journal
-          const rxDoc = await executeQuery('SELECT doc_number, doc_date FROM Receivings WHERE id = ?', [rxId]);
-
-          const result = await createAutomatedJournal('Receiving', rxId, rxDoc[0].doc_number, rxDoc[0].doc_date, [
-            { coa_id: inventoryAcc, debit: totalAmount, credit: 0, description: 'Inventory Receipt' },
-            { coa_id: apTempAcc, debit: 0, credit: totalAmount, description: 'AP Temporary' }
-          ]);
-          logDebug(`Journal specific creation result: ${result}`);
-        } else {
-          logDebug('Total amount is 0, skipping journal.');
-        }
-      } else {
-        logDebug('Missing GL Accounts settings.');
-      }
-    } catch (jErr) {
-      logDebug(`ERROR: ${jErr.message}`);
-      console.error('Failed to generate receiving journal:', jErr);
-    }
-
-    res.json({ success: true, message: 'Receiving berhasil di-approve' });
-  } catch (error) {
-    console.error('Error approving receiving:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 
 // ==================== SALESPERSONS ====================
 app.get('/api/salespersons', async (req, res) => {
@@ -2413,7 +2470,7 @@ app.get('/api/journals', async (req, res) => {
 
     if (source_type) {
       if (source_type === 'SYSTEM') {
-        conditions.push('source_type IS NOT NULL');
+        conditions.push("status = 'Posted'");
       } else if (source_type === 'MANUAL') {
         conditions.push("(source_type = 'MANUAL' OR source_type IS NULL)");
       } else {
@@ -2729,24 +2786,204 @@ app.delete('/api/journals/:id', async (req, res) => {
   }
 });
 
-// Post Journal Voucher
-app.put('/api/journals/:id/post', async (req, res) => {
+// Approve Journal Voucher
+app.put('/api/journals/:id/approve', authenticateToken, async (req, res) => {
   try {
     const jvId = req.params.id;
-    await executeQuery("UPDATE JournalVouchers SET status = 'Posted' WHERE id = ?", [jvId]);
+    
+    const txData = await executeQuery(`
+      SELECT j.doc_number, j.current_approval_level, j.status, t.nomortranscode 
+      FROM JournalVouchers j 
+      LEFT JOIN Transcodes t ON j.transcode_id = t.id 
+      WHERE j.id = ?
+    `, [jvId]);
+    
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Journal not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Cannot be approved' });
+
+    let transactionTypeStr = 'journal-voucher';
+    if (txData[0].nomortranscode === 10) transactionTypeStr = 'cash-in';
+    else if (txData[0].nomortranscode === 11) transactionTypeStr = 'cash-out';
+    else if (txData[0].nomortranscode === 12) transactionTypeStr = 'bank-in';
+    else if (txData[0].nomortranscode === 13) transactionTypeStr = 'bank-out';
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, transactionTypeStr, 0, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery(`UPDATE JournalVouchers SET status = ?, current_approval_level = ?, approved_by = ? WHERE id = ?`, [newStatus, newLevel, req.user.id, jvId]);
+    
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('journal-voucher', parseInt(jvId), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Journal approved successfully' : `Journal disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    console.error('Error approving journal:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Unapprove Journal Voucher
+app.put('/api/journals/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const jvId = req.params.id;
+    
+    const txData = await executeQuery(`
+      SELECT j.doc_number, j.current_approval_level, j.status, t.nomortranscode 
+      FROM JournalVouchers j 
+      LEFT JOIN Transcodes t ON j.transcode_id = t.id 
+      WHERE j.id = ?
+    `, [jvId]);
+    
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Journal not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove posted journal' });
+
+    let transactionTypeStr = 'journal-voucher';
+    if (txData[0].nomortranscode === 10) transactionTypeStr = 'cash-in';
+    else if (txData[0].nomortranscode === 11) transactionTypeStr = 'cash-out';
+    else if (txData[0].nomortranscode === 12) transactionTypeStr = 'bank-in';
+    else if (txData[0].nomortranscode === 13) transactionTypeStr = 'bank-out';
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, transactionTypeStr, 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery(`UPDATE JournalVouchers SET status = ?, current_approval_level = ?, approved_by = NULL WHERE id = ?`, [newStatus, newLevel, jvId]);
+    
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('journal-voucher', parseInt(jvId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Journal unapproved successfully' : `Journal turun ke ${newStatus}` });
+  } catch (error) {
+    console.error('Error unapproving journal:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Post Journal Voucher
+app.put('/api/journals/:id/post', authenticateToken, async (req, res) => {
+  try {
+    const jvId = req.params.id;
+    const txData = await executeQuery(`
+      SELECT j.doc_number, j.status, j.current_approval_level, t.nomortranscode 
+      FROM JournalVouchers j 
+      LEFT JOIN Transcodes t ON j.transcode_id = t.id 
+      WHERE j.id = ?
+    `, [jvId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Journal not found' });
+    if (txData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Only Approved journal can be posted' });
+
+    let featureKey = 'journal-voucher';
+    if (txData[0].nomortranscode === 10) featureKey = 'cash-in';
+    else if (txData[0].nomortranscode === 11) featureKey = 'cash-out';
+    else if (txData[0].nomortranscode === 12) featureKey = 'bank-in';
+    else if (txData[0].nomortranscode === 13) featureKey = 'bank-out';
+
+    // Verify user role & permissions from DB since req.user only contains jwt payload
+    const userRows = await executeQuery(`
+      SELECT r.name as role_name, rp.can_post
+      FROM Users u
+      LEFT JOIN Roles r ON u.role_id = r.id
+      LEFT JOIN RolePermissions rp ON r.id = rp.role_id AND rp.feature_key = ?
+      WHERE u.id = ?
+    `, [featureKey, req.user.id]);
+
+    const roleName = userRows.length > 0 && userRows[0].role_name ? userRows[0].role_name.trim() : null;
+    const canPostFlag = userRows.length > 0 && userRows[0].can_post === 'Y';
+
+    const canPost = roleName === 'Super Admin' || roleName === 'Manager' || canPostFlag;
+    if (!canPost) return res.status(403).json({ success: false, error: 'Unauthorized to post' });
+
+    await executeQuery(`UPDATE JournalVouchers SET status = 'Posted' WHERE id = ?`, [jvId]);
     res.json({ success: true, message: 'Journal posted successfully' });
   } catch (error) {
+    console.error('ERROR IN POST JOURNAL:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Unpost Journal Voucher
-app.put('/api/journals/:id/unpost', async (req, res) => {
+app.put('/api/journals/:id/unpost', authenticateToken, async (req, res) => {
   try {
     const jvId = req.params.id;
-    await executeQuery("UPDATE JournalVouchers SET status = 'Draft' WHERE id = ?", [jvId]);
+    const txData = await executeQuery(`
+      SELECT j.doc_number, j.status, j.current_approval_level, t.nomortranscode 
+      FROM JournalVouchers j 
+      LEFT JOIN Transcodes t ON j.transcode_id = t.id 
+      WHERE j.id = ?
+    `, [jvId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Journal not found' });
+    if (txData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted journal can be unposted' });
+
+    let featureKey = 'journal-voucher';
+    if (txData[0].nomortranscode === 10) featureKey = 'cash-in';
+    else if (txData[0].nomortranscode === 11) featureKey = 'cash-out';
+    else if (txData[0].nomortranscode === 12) featureKey = 'bank-in';
+    else if (txData[0].nomortranscode === 13) featureKey = 'bank-out';
+
+    // Verify user role & permissions from DB since req.user only contains jwt payload
+    const userRows = await executeQuery(`
+      SELECT r.name as role_name, rp.can_post
+      FROM Users u
+      LEFT JOIN Roles r ON u.role_id = r.id
+      LEFT JOIN RolePermissions rp ON r.id = rp.role_id AND rp.feature_key = ?
+      WHERE u.id = ?
+    `, [featureKey, req.user.id]);
+
+    const roleName = userRows.length > 0 && userRows[0].role_name ? userRows[0].role_name.trim() : null;
+    const canUnpostFlag = userRows.length > 0 && userRows[0].can_post === 'Y';
+
+    const canUnpost = roleName === 'Super Admin' || roleName === 'Manager' || canUnpostFlag;
+    if (!canUnpost) return res.status(403).json({ success: false, error: 'Unauthorized to unpost' });
+
+    await executeQuery(`UPDATE JournalVouchers SET status = 'Approved' WHERE id = ?`, [jvId]);
     res.json({ success: true, message: 'Journal unposted successfully' });
   } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Void Journal Voucher
+app.put('/api/journals/:id/void', authenticateToken, async (req, res) => {
+  try {
+    const jvId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, status FROM JournalVouchers WHERE id = ?', [jvId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Journal not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot void posted journal. Unpost first.' });
+    if (txData[0].status === 'Voided') return res.status(400).json({ success: false, error: 'Journal is already voided' });
+
+    // Reverse allocation
+    const oldDetails = await executeQuery('SELECT ref_id, ref_type, debit, credit FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
+    for (const old of oldDetails) {
+      if (old.ref_id && old.ref_type) {
+        const table = old.ref_type === 'AP' ? 'APInvoices' : (old.ref_type === 'AR' ? 'ARInvoices' : null);
+        if (table) {
+          const amount = parseFloat(old.debit) || parseFloat(old.credit) || 0;
+          await executeQuery(`UPDATE ${table} SET paid_amount = paid_amount - ? WHERE id = ?`, [amount, old.ref_id]);
+          await executeQuery(`UPDATE ${table} SET status = 'Posted' WHERE id = ? AND paid_amount <= 0`, [old.ref_id]);
+          await executeQuery(`UPDATE ${table} SET status = 'Partial' WHERE id = ? AND paid_amount > 0 AND paid_amount < total_amount`, [old.ref_id]);
+        }
+      }
+    }
+
+    await executeQuery(`UPDATE JournalVouchers SET status = 'Voided' WHERE id = ?`, [jvId]);
+    res.json({ success: true, message: 'Journal voided successfully' });
+  } catch (error) {
+    console.error('Error voiding journal:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -2898,14 +3135,14 @@ async function createAutomatedJournal(type, ref_id, doc_number, doc_date, detail
     // await connection.commit();
     logDebug(`Transaction Committed for JV #${jvId}`);
 
-    console.log(`✅ Automated Journal created for ${type} #${doc_number}`);
+    console.log(`âœ… Automated Journal created for ${type} #${doc_number}`);
     return true;
   } catch (error) {
     if (connection) {
       try { await connection.query('ROLLBACK'); } catch (e) { }
     }
     logDebug(`ERROR in createAutomatedJournal: ${error.message}`);
-    console.error(`❌ Failed to create automated journal for ${type} #${doc_number}:`, error);
+    console.error(`âŒ Failed to create automated journal for ${type} #${doc_number}:`, error);
     return false;
   } finally {
     if (connection) {
@@ -2916,21 +3153,21 @@ async function createAutomatedJournal(type, ref_id, doc_number, doc_date, detail
 
 // Function to get GL Account ID by setting key
 async function getGlAccount(key, entityCode = null) {
-  let query = 'SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code ';
+  let query = 'SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ?';
   let params = [key];
 
   if (entityCode) {
-    query += '= ?';
+    query += ' AND entity_code = ?';
     params.push(entityCode);
   } else {
-    query += 'IS NULL';
+    query += " AND (entity_code IS NULL OR entity_code = '01')";
   }
 
   let res = await executeQuery(query, params);
 
-  // Fallback to global setting (entity_code IS NULL) if specific entity setting not found
+  // Fallback to global setting if specific entity setting not found
   if (res.length === 0 && entityCode) {
-    res = await executeQuery('SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ? AND entity_code IS NULL', [key]);
+    res = await executeQuery("SELECT account_id FROM GeneralLedgerSettings WHERE setting_key = ? AND (entity_code IS NULL OR entity_code = '01')", [key]);
   }
 
   return res.length > 0 ? res[0].account_id : null;
@@ -3144,7 +3381,9 @@ app.get('/api/purchase-orders', async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     let query = `
-            SELECT po.*, p.name as partner_name, t.name as transcode_name, pt.name as payment_term_name
+            SELECT po.*, p.name as partner_name, t.name as transcode_name, pt.name as payment_term_name,
+            (SELECT COALESCE(SUM(quantity), 0) FROM PurchaseOrderDetails WHERE po_id = po.id) as total_qty_ordered,
+            (SELECT COALESCE(SUM(rd.quantity), 0) FROM ReceivingDetails rd JOIN Receivings r ON rd.receiving_id = r.id WHERE r.po_id = po.id AND r.status != 'Cancelled') as total_qty_received
             FROM PurchaseOrders po
             LEFT JOIN Partners p ON po.partner_id = p.id
             LEFT JOIN Transcodes t ON po.transcode_id = t.id
@@ -3292,31 +3531,70 @@ app.delete('/api/purchase-orders/:id', async (req, res) => {
   }
 });
 
-app.put('/api/purchase-orders/:id/approve', async (req, res) => {
+app.put('/api/purchase-orders/:id/approve', authenticateToken, async (req, res) => {
   try {
-    // Optional: Validate status is Draft before approving
-    await executeQuery('UPDATE PurchaseOrders SET status = ? WHERE id = ?', ['Approved', req.params.id]);
-    res.json({ success: true, message: 'Purchase Order berhasil di-approve' });
+    const poData = await executeQuery('SELECT doc_number, total_amount, current_approval_level FROM PurchaseOrders WHERE id = ?', [req.params.id]);
+    if (poData.length === 0) return res.status(404).json({ success: false, error: 'PO tidak ditemukan' });
+    const totalAmount = parseFloat(poData[0].total_amount) || 0;
+    const docNumber = poData[0].doc_number;
+    const currentLevel = parseInt(poData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'purchase-order', totalAmount, currentLevel, 'approve');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery(
+      'UPDATE PurchaseOrders SET status = ?, current_approval_level = ?, approved_by = ?, approved_at = CURRENT TIMESTAMP WHERE id = ?',
+      [newStatus, newLevel, req.user.id, req.params.id]
+    );
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('purchase-order', parseInt(req.params.id), docNumber, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Purchase Order berhasil di-approve (Final)' : `Purchase Order disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/purchase-orders/:id/unapprove', async (req, res) => {
+app.put('/api/purchase-orders/:id/unapprove', authenticateToken, async (req, res) => {
   try {
+    const poData = await executeQuery('SELECT doc_number, current_approval_level FROM PurchaseOrders WHERE id = ?', [req.params.id]);
+    if (poData.length === 0) return res.status(404).json({ success: false, error: 'PO tidak ditemukan' });
+    const currentLevel = parseInt(poData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'purchase-order', 0, currentLevel, 'unapprove');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
     // Validation: Check if linked to Receiving
-    console.log(`Unapproving PO ID: ${req.params.id}`);
     const hasReceiving = await executeQuery("SELECT COUNT(*) as count FROM Receivings WHERE po_id = ? AND status <> ?", [parseInt(req.params.id), 'Cancelled']);
     if (hasReceiving[0].count > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Tidak dapat meng-unapprove PO karena sudah ada dokumen Receiving yang terhubung. Hapus Receiving terlebih dahulu.'
+        message: 'Tidak dapat meng-unapprove PO karena sudah ada dokumen Receiving yang terhubung.'
       });
     }
 
-    // Optional: Check if already processed (e.g. received)
-    await executeQuery('UPDATE PurchaseOrders SET status = ? WHERE id = ?', ['Draft', req.params.id]);
-    res.json({ success: true, message: 'Purchase Order berhasil di-unapprove (Kembali ke Draft)' });
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery(
+      'UPDATE PurchaseOrders SET status = ?, current_approval_level = ?, approved_by = NULL, approved_at = NULL WHERE id = ?',
+      [newStatus, newLevel, req.params.id]
+    );
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('purchase-order', parseInt(req.params.id), poData[0].doc_number || '', 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Purchase Order kembali ke Draft' : `Purchase Order turun ke ${newStatus}` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -3445,30 +3723,66 @@ app.put('/api/sales-orders/:id', async (req, res) => {
   }
 });
 
-app.put('/api/sales-orders/:id/approve', async (req, res) => {
+app.put('/api/sales-orders/:id/approve', authenticateToken, async (req, res) => {
   try {
-    await executeQuery('UPDATE SalesOrders SET status = ? WHERE id = ?', ['Approved', req.params.id]);
-    res.json({ success: true, message: 'Sales Order berhasil di-approve' });
+    const soData = await executeQuery('SELECT doc_number, total_amount, current_approval_level FROM SalesOrders WHERE id = ?', [req.params.id]);
+    if (soData.length === 0) return res.status(404).json({ success: false, error: 'SO tidak ditemukan' });
+    const totalAmount = parseFloat(soData[0].total_amount) || 0;
+    const docNumber = soData[0].doc_number;
+    const currentLevel = parseInt(soData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'sales-order', totalAmount, currentLevel, 'approve');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery(
+      'UPDATE SalesOrders SET status = ?, current_approval_level = ?, approved_by = ?, approved_at = CURRENT TIMESTAMP WHERE id = ?',
+      [newStatus, newLevel, req.user.id, req.params.id]
+    );
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('sales-order', parseInt(req.params.id), docNumber, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Sales Order berhasil di-approve (Final)' : `Sales Order disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/sales-orders/:id/unapprove', async (req, res) => {
+app.put('/api/sales-orders/:id/unapprove', authenticateToken, async (req, res) => {
   try {
-    // Validation: Check if linked to Shipment
-    console.log(`Unapproving SO ID: ${req.params.id}`);
-    const hasShipment = await executeQuery("SELECT COUNT(*) as count FROM Shipments WHERE so_id = ? AND status <> ?", [req.params.id, 'Cancelled']);
-    if (hasShipment[0].count > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Tidak dapat meng-unapprove SO karena sudah ada dokumen Shipment yang terhubung. Hapus Shipment terlebih dahulu.'
-      });
+    const soData = await executeQuery('SELECT doc_number, current_approval_level FROM SalesOrders WHERE id = ?', [req.params.id]);
+    if (soData.length === 0) return res.status(404).json({ success: false, error: 'SO tidak ditemukan' });
+    const currentLevel = parseInt(soData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'sales-order', 0, currentLevel, 'unapprove');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
     }
 
-    // Post: Unapprove Sales Order
-    await executeQuery('UPDATE SalesOrders SET status = ? WHERE id = ?', ['Draft', req.params.id]);
-    res.json({ success: true, message: 'Sales Order berhasil di-unapprove (Kembali ke Draft)' });
+    const hasShipment = await executeQuery("SELECT COUNT(*) as count FROM Shipments WHERE so_id = ? AND status <> ?", [req.params.id, 'Cancelled']);
+    if (hasShipment[0].count > 0) {
+      return res.status(400).json({ success: false, message: 'Tidak dapat meng-unapprove SO karena sudah ada Shipment terhubung.' });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery(
+      'UPDATE SalesOrders SET status = ?, current_approval_level = ?, approved_by = NULL, approved_at = NULL WHERE id = ?',
+      [newStatus, newLevel, req.params.id]
+    );
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('sales-order', parseInt(req.params.id), soData[0].doc_number || '', 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Sales Order kembali ke Draft' : `Sales Order turun ke ${newStatus}` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -3520,204 +3834,6 @@ app.delete('/api/sales-orders/:id', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// ==================== RECEIVINGS ====================
-app.get('/api/receivings', async (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-    let query = `
-            SELECT
-                rec.*,
-                po.doc_number as po_number,
-                p.name as partner_name,
-                l.name as location_name,
-                (SELECT SUM(quantity) FROM ReceivingDetails WHERE receiving_id = rec.id) as total_received,
-                (SELECT SUM(quantity) FROM APInvoiceDetails ad JOIN APInvoices ai ON ad.ap_invoice_id = ai.id WHERE ai.receiving_id = rec.id AND ai.status != 'Cancelled') as total_billed
-            FROM Receivings rec
-            LEFT JOIN PurchaseOrders po ON rec.po_id = po.id
-            LEFT JOIN Partners p ON po.partner_id = p.id
-            LEFT JOIN Locations l ON rec.location_id = l.id
-        `;
-
-    const params = [];
-    if (startDate && endDate) {
-      query += ' WHERE rec.doc_date BETWEEN ? AND ?';
-      params.push(startDate, endDate);
-    }
-
-    query += ' ORDER BY rec.doc_number DESC';
-
-    const result = await executeQuery(query, params);
-    res.json({ success: true, data: result });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.get('/api/receivings/:id', async (req, res) => {
-  console.log('GET /api/receivings/:id hit for ID:', req.params.id);
-  try {
-    const header = await executeQuery(`
-      SELECT r.*, p.name as partner_name, po.doc_number as po_number, w.description as warehouse_name, l.name as location_name
-      FROM Receivings r
-      LEFT JOIN Partners p ON r.partner_id = p.id
-      LEFT JOIN PurchaseOrders po ON r.po_id = po.id
-      LEFT JOIN Warehouses w ON r.warehouse_id = w.id
-      LEFT JOIN Locations l ON r.location_id = l.id
-      WHERE r.id = ?
-    `, [req.params.id]);
-
-    const details = await executeQuery(`
-      SELECT d.*, i.code as item_code, i.name as item_name, i.unit as unit_code,
-             COALESCE(d.unit_price, pod.unit_price, 0) as unit_price,
-             COALESCE(po.tax_type, 'Exclude') as tax_type,
-             (SELECT COALESCE(SUM(apd.quantity), 0)
-              FROM APInvoiceDetails apd
-              JOIN APInvoices api ON apd.ap_invoice_id = api.id
-              WHERE apd.receiving_id = d.receiving_id
-              AND apd.item_id = d.item_id
-              AND api.status <> 'Cancelled') as qty_billed
-      FROM ReceivingDetails d
-      LEFT JOIN Items i ON d.item_id = i.id
-      LEFT JOIN Receivings r ON d.receiving_id = r.id
-      LEFT JOIN PurchaseOrders po ON r.po_id = po.id
-      LEFT JOIN PurchaseOrderDetails pod ON r.po_id = pod.po_id AND d.item_id = pod.item_id
-      WHERE d.receiving_id = ?
-    `, [req.params.id]);
-
-    res.json({ success: true, data: { ...header[0], details } });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post('/api/receivings', async (req, res) => {
-  try {
-    const { doc_number, doc_date, po_id, partner_id, warehouse_id, location_id, status, items, transcode_id, remarks, currency_code } = req.body;
-
-    await executeQuery(
-      'INSERT INTO Receivings (doc_number, doc_date, po_id, partner_id, warehouse_id, location_id, status, transcode_id, remarks, currency_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [doc_number, doc_date, po_id || null, partner_id, warehouse_id || null, location_id || null, status || 'Draft', transcode_id || null, remarks || '', currency_code || null]
-    );
-
-    const result = await executeQuery('SELECT * FROM Receivings WHERE doc_number = ?', [doc_number]);
-    const recId = result[0]?.id;
-
-    if (items && items.length > 0 && recId) {
-      for (const d of items) {
-        await executeQuery(
-          'INSERT INTO ReceivingDetails (receiving_id, item_id, quantity, unit_price, remarks) VALUES (?, ?, ?, ?, ?)',
-          [recId, d.item_id, d.quantity, d.unit_price || 0, d.remarks || '']
-        );
-      }
-    }
-
-    res.json({ success: true, data: result[0], message: 'Receiving berhasil dibuat' });
-
-    // Auto-update PO status
-    if (po_id) await updatePOStatus(po_id);
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.put('/api/receivings/:id', async (req, res) => {
-  try {
-    const { doc_number, doc_date, po_id, partner_id, warehouse_id, location_id, status, items, transcode_id, remarks, currency_code } = req.body;
-
-    await executeQuery(
-      'UPDATE Receivings SET doc_number = ?, doc_date = ?, po_id = ?, partner_id = ?, warehouse_id = ?, location_id = ?, status = ?, transcode_id = ?, remarks = ?, currency_code = ? WHERE id = ?',
-      [doc_number, doc_date, po_id || null, partner_id, warehouse_id || null, location_id || null, status, transcode_id || null, remarks || '', currency_code || null, req.params.id]
-    );
-
-    await executeQuery('DELETE FROM ReceivingDetails WHERE receiving_id = ?', [req.params.id]);
-    if (items && items.length > 0) {
-      for (const d of items) {
-        await executeQuery(
-          'INSERT INTO ReceivingDetails (receiving_id, item_id, quantity, unit_price, remarks) VALUES (?, ?, ?, ?, ?)',
-          [req.params.id, d.item_id, d.quantity, d.unit_price || 0, d.remarks || '']
-        );
-      }
-    }
-
-    res.json({ success: true, message: 'Receiving berhasil diupdate' });
-
-    // Auto-update PO status (using submitted PO ID)
-    if (po_id) await updatePOStatus(po_id);
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.delete('/api/receivings/:id', async (req, res) => {
-  try {
-    const rxId = req.params.id;
-    const result = await executeQuery('SELECT * FROM Receivings WHERE id = ?', [rxId]);
-
-    if (result.length === 0) return res.status(404).json({ success: false, message: 'Receiving not found' });
-    if (result[0].status !== 'Draft') { // Should strictly be Draft, but let's check
-      return res.status(400).json({ success: false, message: 'Hanya dokumen Draft yang bisa dihapus' });
-    }
-
-    // Check if used in other tables (logic exists?)
-
-    // Cleanup Journal (Safety measure)
-    try {
-      const checkJurnal = await executeQuery('SELECT id FROM JournalVouchers WHERE source_type = ? AND ref_id = ?', ['Receiving', rxId]);
-      if (checkJurnal.length > 0) {
-        const jvId = checkJurnal[0].id;
-        await executeQuery('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
-        await executeQuery('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
-      }
-    } catch (jErr) {
-      console.error('Error cleaning up journal:', jErr);
-    }
-
-    await executeQuery('DELETE FROM ReceivingDetails WHERE receiving_id = ?', [rxId]);
-    await executeQuery('DELETE FROM Receivings WHERE id = ?', [rxId]);
-
-    if (result[0].po_id) await updatePOStatus(result[0].po_id);
-
-    res.json({ success: true, message: 'Receiving berhasil dihapus' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.put('/api/receivings/:id/approve', async (req, res) => {
-  try {
-    // In future: Add inventory transaction logic here
-    await executeQuery('UPDATE Receivings SET status = ? WHERE id = ?', ['Approved', req.params.id]);
-    res.json({ success: true, message: 'Receiving berhasil di-approve' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.put('/api/receivings/:id/unapprove', async (req, res) => {
-  try {
-    const rxId = req.params.id;
-    await executeQuery('UPDATE Receivings SET status = ? WHERE id = ?', ['Draft', rxId]);
-
-    // ================== DELETE AUTOMATED JOURNAL ==================
-    try {
-      const checkJurnal = await executeQuery('SELECT id FROM JournalVouchers WHERE source_type = ? AND ref_id = ?', ['Receiving', rxId]);
-      if (checkJurnal.length > 0) {
-        const jvId = checkJurnal[0].id;
-        await executeQuery('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
-        await executeQuery('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
-        console.log(`✅ Automated Journal deleted for Receiving #${rxId}`);
-      }
-    } catch (jErr) {
-      console.error('Failed to delete receiving journal:', jErr);
-    }
-
-    res.json({ success: true, message: 'Receiving berhasil di-unpost (Kembali ke Draft)' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 
 // ==================== AP INVOICES ====================
 app.get('/api/ap-invoices', async (req, res) => {
@@ -3884,45 +4000,76 @@ app.delete('/api/ap-invoices/:id', async (req, res) => {
   }
 });
 
-app.put('/api/ap-invoices/:id/post', async (req, res) => {
+// Approve AP Invoice
+app.put('/api/ap-invoices/:id/approve', authenticateToken, async (req, res) => {
   try {
     const apId = req.params.id;
-    await executeQuery('UPDATE APInvoices SET status = ? WHERE id = ?', ['Posted', apId]);
+    const txData = await executeQuery('SELECT doc_number, doc_date, tax_type, current_approval_level, status FROM APInvoices WHERE id = ?', [apId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Cannot be approved' });
+
+    // Calculate Amount
+    const items = await executeQuery('SELECT * FROM APInvoiceDetails WHERE ap_invoice_id = ?', [apId]);
+    let totalNet = 0;
+    items.forEach(item => { totalNet += (Number(item.quantity) * Number(item.unit_price)) || 0; });
+    let totalVAT = 0;
+    if (txData[0].tax_type === 'Include') { totalVAT = totalNet - (totalNet / 1.11); totalNet = totalNet / 1.11; } 
+    else if (txData[0].tax_type === 'Exclude') { totalVAT = totalNet * 0.11; }
+    const totalAP = totalNet + totalVAT;
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ap-invoice', totalAP, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery('UPDATE APInvoices SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, req.user.id, apId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('ap-invoice', parseInt(apId), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'AP Invoice fully approved and ready to post' : `AP Invoice disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Post AP Invoice (Automated Journal)
+app.put('/api/ap-invoices/:id/post', authenticateToken, async (req, res) => {
+  try {
+    const apId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, doc_date, tax_type, current_approval_level, status FROM APInvoices WHERE id = ?', [apId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Only Approved invoices can be posted' });
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    // We check permission just to be safe, using total amount logic
+    const items = await executeQuery('SELECT * FROM APInvoiceDetails WHERE ap_invoice_id = ?', [apId]);
+    let totalNet = 0;
+    items.forEach(item => { totalNet += (Number(item.quantity) * Number(item.unit_price)) || 0; });
+    let totalVAT = 0;
+    if (txData[0].tax_type === 'Include') { totalVAT = totalNet - (totalNet / 1.11); totalNet = totalNet / 1.11; } 
+    else if (txData[0].tax_type === 'Exclude') { totalVAT = totalNet * 0.11; }
+    const totalAP = totalNet + totalVAT;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'ap-invoice', totalAP, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to post this invoice' });
+    }
 
     // ================== AUTOMATED JOURNAL (AP INVOICE) ==================
-    // Debit: Hutang Dagang Temporary (AP Temporary)
-    // Credit: Hutang Dagang (AP Trade)
-    // Debit: PPN Masukan (VAT In) - if applicable
     try {
       const apTempAcc = await getGlAccount('ap_temp_account');
       const apTradeAcc = await getGlAccount('ap_trade_account');
       const vatInAcc = await getGlAccount('vat_in_account');
 
       if (apTempAcc && apTradeAcc) {
-        const apDoc = await executeQuery('SELECT * FROM APInvoices WHERE id = ?', [apId]);
-        const inv = apDoc[0];
-
-        const items = await executeQuery('SELECT * FROM APInvoiceDetails WHERE ap_invoice_id = ?', [apId]);
-
-        // Calculate Totals
-        let totalNet = 0;
-        let totalVAT = 0;
-
-        items.forEach(item => {
-          totalNet += (Number(item.quantity) * Number(item.unit_price)) || 0;
-        });
-
-        if (inv.tax_type === 'Include') {
-          totalVAT = totalNet - (totalNet / 1.11);
-          totalNet = totalNet / 1.11;
-        } else if (inv.tax_type === 'Exclude') {
-          totalVAT = totalNet * 0.11;
-        } else {
-          totalVAT = 0;
-        }
-
-        const totalAP = totalNet + totalVAT;
-
         if (totalAP > 0) {
           const journalDetails = [
             { coa_id: apTempAcc, debit: totalNet, credit: 0, description: 'AP Temporary Reversal' },
@@ -3933,12 +4080,14 @@ app.put('/api/ap-invoices/:id/post', async (req, res) => {
             journalDetails.push({ coa_id: vatInAcc, debit: totalVAT, credit: 0, description: 'VAT In' });
           }
 
-          await createAutomatedJournal('APInvoice', apId, inv.doc_number, inv.doc_date, journalDetails);
+          await createAutomatedJournal('APInvoice', apId, txData[0].doc_number, txData[0].doc_date, journalDetails);
         }
       }
     } catch (jErr) {
       console.error('Failed to generate AP Invoice journal:', jErr);
     }
+
+    await executeQuery('UPDATE APInvoices SET status = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', ['Posted', apId]);
 
     res.json({ success: true, message: 'AP Invoice berhasil di-post' });
   } catch (error) {
@@ -3946,10 +4095,19 @@ app.put('/api/ap-invoices/:id/post', async (req, res) => {
   }
 });
 
-app.put('/api/ap-invoices/:id/unpost', async (req, res) => {
+app.put('/api/ap-invoices/:id/unpost', authenticateToken, async (req, res) => {
   try {
     const apId = req.params.id;
-    await executeQuery('UPDATE APInvoices SET status = ? WHERE id = ?', ['Draft', apId]);
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM APInvoices WHERE id = ?', [apId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted invoices can be unposted' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ap-invoice', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to unpost this invoice' });
+    }
 
     // ================== DELETE AUTOMATED JOURNAL ==================
     try {
@@ -3958,13 +4116,45 @@ app.put('/api/ap-invoices/:id/unpost', async (req, res) => {
         const jvId = checkJurnal[0].id;
         await executeQuery('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
         await executeQuery('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
-        console.log(`✅ Automated Journal deleted for AP Invoice #${apId}`);
+        console.log(`âœ… Automated Journal deleted for AP Invoice #${apId}`);
       }
     } catch (jErr) {
       console.error('Failed to delete AP Invoice journal:', jErr);
     }
 
-    res.json({ success: true, message: 'AP Invoice berhasil di-unpost (Kembali ke Draft)' });
+    await executeQuery('UPDATE APInvoices SET status = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', ['Approved', apId]);
+
+    res.json({ success: true, message: 'AP Invoice berhasil di-unpost' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Unapprove AP Invoice
+app.put('/api/ap-invoices/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const apId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM APInvoices WHERE id = ?', [apId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted invoice. Unpost it first.' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ap-invoice', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery('UPDATE APInvoices SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, apId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('ap-invoice', parseInt(apId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'AP Invoice berhasil di-unapprove (Kembali ke Draft)' : `AP Invoice turun ke ${newStatus}` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4159,70 +4349,85 @@ app.get('/api/ar-invoices/:id', async (req, res) => {
   }
 });
 
-app.put('/api/ar-invoices/:id/post', async (req, res) => {
+// Approve AR Invoice
+app.put('/api/ar-invoices/:id/approve', authenticateToken, async (req, res) => {
   try {
     const arId = req.params.id;
-    await executeQuery('UPDATE ARInvoices SET status = ? WHERE id = ?', ['Posted', arId]);
+    const txData = await executeQuery('SELECT doc_number, doc_date, tax_type, current_approval_level, status FROM ARInvoices WHERE id = ?', [arId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Cannot be approved' });
+
+    // Calculate Amount
+    const items = await executeQuery('SELECT * FROM ARInvoiceDetails WHERE ar_invoice_id = ?', [arId]);
+    let totalSales = 0;
+    items.forEach(item => { totalSales += (Number(item.quantity) * Number(item.unit_price)) || 0; });
+    let totalVAT = 0;
+    if (txData[0].tax_type === 'Include') { totalVAT = totalSales - (totalSales / 1.11); totalSales = totalSales / 1.11; } 
+    else if (txData[0].tax_type === 'Exclude') { totalVAT = totalSales * 0.11; }
+    const totalAR = totalSales + totalVAT;
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ar-invoice', totalAR, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery('UPDATE ARInvoices SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, req.user.id, arId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('ar-invoice', parseInt(arId), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'AR Invoice fully approved and ready to post' : `AR Invoice disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Post AR Invoice (Automated Journal)
+app.put('/api/ar-invoices/:id/post', authenticateToken, async (req, res) => {
+  try {
+    const arId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, doc_date, tax_type, current_approval_level, status FROM ARInvoices WHERE id = ?', [arId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Only Approved invoices can be posted' });
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    // Calculate Amount
+    const items = await executeQuery('SELECT * FROM ARInvoiceDetails WHERE ar_invoice_id = ?', [arId]);
+    let totalSales = 0;
+    items.forEach(item => { totalSales += (Number(item.quantity) * Number(item.unit_price)) || 0; });
+    let totalVAT = 0;
+    if (txData[0].tax_type === 'Include') { totalVAT = totalSales - (totalSales / 1.11); totalSales = totalSales / 1.11; } 
+    else if (txData[0].tax_type === 'Exclude') { totalVAT = totalSales * 0.11; }
+    const totalAR = totalSales + totalVAT;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'ar-invoice', totalAR, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to post this invoice' });
+    }
 
     // ================== AUTOMATED JOURNAL (AR INVOICE) ==================
-    // 1. Dr Piutang / Cr Sales & VAT
-    // 2. Reversal: Dr Sales Temp / Cr Uninvoice Shipment
-    // 3. COGS: Dr COGS / Cr Inventory
-
     try {
       const arTradeAcc = await getGlAccount('ar_trade_account');
       const salesAcc = await getGlAccount('sales_account');
       const vatOutAcc = await getGlAccount('vat_out_account');
-
       const salesTempAcc = await getGlAccount('sales_temp_account');
       const uninvoiceShipmentAcc = await getGlAccount('uninvoice_shipment_account');
-
       const cogsAcc = await getGlAccount('cogs_account');
       const inventoryAcc = await getGlAccount('inventory_account');
 
       if (arTradeAcc && salesAcc && vatOutAcc && salesTempAcc && uninvoiceShipmentAcc && cogsAcc && inventoryAcc) {
-
-        const arDoc = await executeQuery('SELECT * FROM ARInvoices WHERE id = ?', [arId]);
-        const inv = arDoc[0];
-
-        // Get Invoice Details
-        const items = await executeQuery('SELECT * FROM ARInvoiceDetails WHERE ar_invoice_id = ?', [arId]);
-
-        // Calculate Totals
-        let totalSales = 0;
-        let totalVAT = 0; // Simplified. Ideally calculate from tax_type or detail
-        // For simplicity, let's assume total_amount includes tax, and we need to derive details
-        // Or better: use item.line_total for Sales, and diff is VAT?
-        // user schema has 'tax_type' header.
-
-        // Helper calc
-        items.forEach(item => {
-          totalSales += (Number(item.quantity) * Number(item.unit_price)) || 0;
-        });
-
-        if (inv.tax_type === 'Include') {
-          totalVAT = totalSales - (totalSales / 1.11);
-          totalSales = totalSales / 1.11;
-        } else if (inv.tax_type === 'Exclude') {
-          totalVAT = totalSales * 0.11;
-        } else {
-          totalVAT = 0;
-        }
-
-        const totalAR = totalSales + totalVAT;
-
-        // Reversal Amount (Shipment Value) & COGS
-        // We need to fetch item standard cost for COGS
-        // We assume Shipment Value = Invoice Sales Value? User wants flow linkage.
-        // Actually Shipment journal was: Qty * UnitPrice (from SO). 
-        // AR Invoice usually matches SO Price. So we can use Invoice Amount for reversal too.
-        const reversalAmount = totalSales; // Assuming Uninvoiced Shipment used same value
+        const reversalAmount = totalSales; 
 
         let totalCOGS = 0;
-        // Calculate COGS using Average Cost from Purchase History
         for (const item of items) {
           if (item.item_id) {
-            // Priority 1: Calculate Average Cost from Approved POs
             const avgCostResult = await executeQuery(`
                 SELECT AVG(pod.unit_price) as avg_cost 
                 FROM PurchaseOrderDetails pod
@@ -4231,27 +4436,19 @@ app.put('/api/ar-invoices/:id/post', async (req, res) => {
             `, [item.item_id]);
 
             let cost = Number(avgCostResult[0]?.avg_cost);
-
-            // Priority 2: If no PO history, use Item Standard Cost
             if (!cost || isNaN(cost)) {
               const itemData = await executeQuery('SELECT standard_cost FROM Items WHERE id = ?', [item.item_id]);
               cost = Number(itemData[0]?.standard_cost) || 0;
             }
-
             totalCOGS += (cost * Number(item.quantity));
           }
         }
 
         const journalDetails = [
-          // 1. AR & Revenue
           { coa_id: arTradeAcc, debit: totalAR, credit: 0, description: 'Accounts Receivable' },
           { coa_id: salesAcc, debit: 0, credit: totalSales, description: 'Sales Revenue' },
-
-          // 2. Shipment Reversal
           { coa_id: salesTempAcc, debit: reversalAmount, credit: 0, description: 'Sales Temporary Reversal' },
           { coa_id: uninvoiceShipmentAcc, debit: 0, credit: reversalAmount, description: 'Uninvoiced Shipment Reversal' },
-
-          // 3. COGS / Inventory
           { coa_id: cogsAcc, debit: totalCOGS, credit: 0, description: 'Cost of Goods Sold' },
           { coa_id: inventoryAcc, debit: 0, credit: totalCOGS, description: 'Inventory' }
         ];
@@ -4260,11 +4457,13 @@ app.put('/api/ar-invoices/:id/post', async (req, res) => {
           journalDetails.push({ coa_id: vatOutAcc, debit: 0, credit: totalVAT, description: 'VAT Out' });
         }
 
-        await createAutomatedJournal('ARInvoice', arId, inv.doc_number, inv.doc_date, journalDetails);
+        await createAutomatedJournal('ARInvoice', arId, txData[0].doc_number, txData[0].doc_date, journalDetails);
       }
     } catch (jErr) {
       console.error('Failed to generate AR Invoice journal:', jErr);
     }
+
+    await executeQuery('UPDATE ARInvoices SET status = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', ['Posted', arId]);
 
     res.json({ success: true, message: 'AR Invoice berhasil di-post' });
   } catch (error) {
@@ -4272,10 +4471,19 @@ app.put('/api/ar-invoices/:id/post', async (req, res) => {
   }
 });
 
-app.put('/api/ar-invoices/:id/unpost', async (req, res) => {
+app.put('/api/ar-invoices/:id/unpost', authenticateToken, async (req, res) => {
   try {
     const arId = req.params.id;
-    await executeQuery('UPDATE ARInvoices SET status = ? WHERE id = ?', ['Draft', arId]);
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM ARInvoices WHERE id = ?', [arId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted invoices can be unposted' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ar-invoice', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to unpost this invoice' });
+    }
 
     // ================== DELETE AUTOMATED JOURNAL ==================
     try {
@@ -4284,13 +4492,45 @@ app.put('/api/ar-invoices/:id/unpost', async (req, res) => {
         const jvId = checkJurnal[0].id;
         await executeQuery('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
         await executeQuery('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
-        console.log(`✅ Automated Journal deleted for AR Invoice #${arId}`);
+        console.log(`âœ… Automated Journal deleted for AR Invoice #${arId}`);
       }
     } catch (jErr) {
       console.error('Failed to delete AR Invoice journal:', jErr);
     }
 
-    res.json({ success: true, message: 'AR Invoice berhasil di-unpost (Kembali ke Draft)' });
+    await executeQuery('UPDATE ARInvoices SET status = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?', ['Approved', arId]);
+
+    res.json({ success: true, message: 'AR Invoice berhasil di-unpost' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Unapprove AR Invoice
+app.put('/api/ar-invoices/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const arId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM ARInvoices WHERE id = ?', [arId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted invoice. Unpost it first.' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'ar-invoice', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery('UPDATE ARInvoices SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, arId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('ar-invoice', parseInt(arId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'AR Invoice berhasil di-unapprove (Kembali ke Draft)' : `AR Invoice turun ke ${newStatus}` });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4883,7 +5123,7 @@ app.post('/api/inventory/recalculate-deprecated', async (req, res) => {
     console.log('Step 1: Clearing existing stocks...');
     try {
       await executeQuery('DELETE FROM ItemStocks');
-      console.log('Step 1: ✅ Complete');
+      console.log('Step 1: âœ… Complete');
     } catch (e) {
       console.error('Step 1 Error:', e.message);
       throw new Error('Gagal menghapus data ItemStocks: ' + e.message);
@@ -4988,7 +5228,7 @@ app.post('/api/inventory/recalculate-deprecated', async (req, res) => {
 
         ORDER BY doc_date ASC, doc_id ASC
         `);
-      console.log('Step 2: ✅ Complete, found', transactions.length, 'total transactions');
+      console.log('Step 2: âœ… Complete, found', transactions.length, 'total transactions');
     } catch (e) {
       console.error('Step 2 Error:', e.message);
       throw new Error('Gagal mengambil data transaksi: ' + e.message);
@@ -5092,7 +5332,7 @@ app.post('/api/inventory/recalculate-deprecated', async (req, res) => {
         console.log(`Skipping invalid warehouse key: ${wKey}`);
       }
     }
-    console.log('Step 4: ✅ Complete, updated', itemsUpdated, 'items');
+    console.log('Step 4: âœ… Complete, updated', itemsUpdated, 'items');
 
     // Update Items Standard Cost
     console.log('Step 5: Updating Item Costs...');
@@ -5108,7 +5348,7 @@ app.post('/api/inventory/recalculate-deprecated', async (req, res) => {
         }
       }
     }
-    console.log('Step 5: ✅ Complete, updated', itemsUpdated, 'item costs');
+    console.log('Step 5: âœ… Complete, updated', itemsUpdated, 'item costs');
 
     console.log(`Recalculation Complete. Updated ${itemsUpdated} items costs.`);
     res.json({ success: true, message: `Stok berhasil dihitung ulang. ${itemsUpdated} item cost telah diupdate.` });
@@ -6530,32 +6770,64 @@ app.delete('/api/inventory-adjustments/:id', async (req, res) => {
   }
 });
 
-// Approve inventory adjustment
-app.put('/api/inventory-adjustments/:id/approve', async (req, res) => {
+// Approve
+app.put('/api/inventory-adjustments/:id/approve', authenticateToken, async (req, res) => {
   try {
-    await executeQuery(`UPDATE InventoryAdjustments SET status = 'Approved', updated_at = CURRENT TIMESTAMP WHERE id = ? AND status = 'Draft'`, [req.params.id]);
-    res.json({ success: true, message: 'Adjustment berhasil diapprove' });
+    const adjId = req.params.id;
+    console.log('Approving inventory adjustment:', adjId);
+    
+    const txData = await executeQuery('SELECT doc_number, doc_date, current_approval_level, status FROM InventoryAdjustments WHERE id = ?', [adjId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Adjustment not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Cannot be approved' });
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'inventory-adjustment', 0, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery(`UPDATE InventoryAdjustments SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, req.user.id, adjId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('inventory-adjustment', parseInt(adjId), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Adjustment fully approved and ready to post' : `Adjustment disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
   } catch (error) {
+    console.error('Error approving inventory adjustment:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Post inventory adjustment (update stock + create journal)
-app.put('/api/inventory-adjustments/:id/post', async (req, res) => {
+app.put('/api/inventory-adjustments/:id/post', authenticateToken, async (req, res) => {
   let connection;
   try {
-    console.log('Posting inventory adjustment:', req.params.id);
-    connection = await odbc.connect(connectionString);
+    const adjId = req.params.id;
+    console.log('Posting inventory adjustment:', adjId);
+    
+    const txData = await executeQuery('SELECT doc_number, doc_date, current_approval_level, status FROM InventoryAdjustments WHERE id = ?', [adjId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Adjustment not found' });
+    if (txData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Only Approved adjustments can be posted' });
 
-    // Check adjustment status
-    const adjResult = await connection.query('SELECT * FROM InventoryAdjustments WHERE id = ?', [req.params.id]);
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'inventory-adjustment', 0, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to post this adjustment' });
+    }
+
+    connection = await odbc.connect(connectionString);
+    await connection.beginTransaction();
+
+    const adjResult = await connection.query('SELECT * FROM InventoryAdjustments WHERE id = ?', [adjId]);
     const adj = adjResult[0];
 
-    if (!adj) return res.status(404).json({ success: false, error: 'Adjustment not found' });
-    if (adj.status === 'Posted') return res.status(400).json({ success: false, error: 'Sudah di-post' });
-
-    const details = await connection.query('SELECT * FROM InventoryAdjustmentDetails WHERE adjustment_id = ?', [req.params.id]);
-    console.log('Found', details.length, 'detail items');
+    const details = await connection.query('SELECT * FROM InventoryAdjustmentDetails WHERE adjustment_id = ?', [adjId]);
 
     // Get inventory account
     let inventoryAccountId = adj.counter_account_id;
@@ -6573,7 +6845,6 @@ app.put('/api/inventory-adjustments/:id/post', async (req, res) => {
       try {
         const qtyChange = adj.adjustment_type === 'IN' ? detail.quantity : -detail.quantity;
 
-        // Check if ItemStocks table exists
         const existingStock = await connection.query(
           'SELECT * FROM ItemStocks WHERE item_id = ? AND warehouse_id = ?',
           [detail.item_id, adj.warehouse_id]
@@ -6605,8 +6876,6 @@ app.put('/api/inventory-adjustments/:id/post', async (req, res) => {
       totalAmount += parseFloat(detail.amount || 0);
     }
 
-    console.log('Total amount for journal:', totalAmount);
-
     // Create Journal Voucher
     const jvNumber = `JV-ADJ-${adj.doc_number}`;
     await connection.query(`
@@ -6616,61 +6885,60 @@ app.put('/api/inventory-adjustments/:id/post', async (req, res) => {
 
     const jvResult = await connection.query('SELECT @@IDENTITY as id');
     const jvId = Number(jvResult[0].id);
-    console.log('Created JV ID:', jvId);
 
-    // Journal entries based on type
     if (adj.adjustment_type === 'IN') {
-      // Dr. Inventory, Cr. Counter Account
       await connection.query('INSERT INTO JournalVoucherDetails (jv_id, coa_id, description, debit, credit) VALUES (?, ?, ?, ?, 0)',
         [jvId, inventoryAccountId, 'Penambahan Stok', totalAmount]);
       await connection.query('INSERT INTO JournalVoucherDetails (jv_id, coa_id, description, debit, credit) VALUES (?, ?, ?, 0, ?)',
         [jvId, adj.counter_account_id, 'Contra Adjustment In', totalAmount]);
     } else {
-      // Dr. Counter Account (COGS), Cr. Inventory
       await connection.query('INSERT INTO JournalVoucherDetails (jv_id, coa_id, description, debit, credit) VALUES (?, ?, ?, ?, 0)',
         [jvId, adj.counter_account_id, 'HPP / COGS Adjustment Out', totalAmount]);
       await connection.query('INSERT INTO JournalVoucherDetails (jv_id, coa_id, description, debit, credit) VALUES (?, ?, ?, 0, ?)',
         [jvId, inventoryAccountId, 'Pengurangan Stok', totalAmount]);
     }
 
-    // Update status
-    await connection.query(`UPDATE InventoryAdjustments SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+    await connection.query(`UPDATE InventoryAdjustments SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [adjId]);
+    await connection.commit();
 
-    console.log('Adjustment posted successfully');
     res.json({ success: true, message: 'Adjustment berhasil di-post' });
   } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) { }
+    }
     console.error('Error posting inventory adjustment:', error);
     res.status(500).json({ success: false, error: error.message });
   } finally {
-    if (connection) await connection.close();
+    if (connection) {
+      try { await connection.close(); } catch (e) { }
+    }
   }
 });
 
-// Unapprove inventory adjustment
-app.put('/api/inventory-adjustments/:id/unapprove', async (req, res) => {
-  try {
-    await executeQuery(`UPDATE InventoryAdjustments SET status = 'Draft', updated_at = CURRENT TIMESTAMP WHERE id = ? AND status = 'Approved'`, [req.params.id]);
-    res.json({ success: true, message: 'Adjustment berhasil di-unapprove' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Unpost inventory adjustment (reverse stock + delete journal)
-app.put('/api/inventory-adjustments/:id/unpost', async (req, res) => {
+app.put('/api/inventory-adjustments/:id/unpost', authenticateToken, async (req, res) => {
   let connection;
   try {
-    console.log('Unposting inventory adjustment:', req.params.id);
-    connection = await odbc.connect(connectionString);
+    const adjId = req.params.id;
+    console.log('Unposting inventory adjustment:', adjId);
 
-    // Check adjustment status
-    const adjResult = await connection.query('SELECT * FROM InventoryAdjustments WHERE id = ?', [req.params.id]);
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM InventoryAdjustments WHERE id = ?', [adjId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Adjustment not found' });
+    if (txData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted adjustments can be unposted' });
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'inventory-adjustment', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to unpost this adjustment' });
+    }
+
+    connection = await odbc.connect(connectionString);
+    await connection.beginTransaction();
+
+    const adjResult = await connection.query('SELECT * FROM InventoryAdjustments WHERE id = ?', [adjId]);
     const adj = adjResult[0];
 
-    if (!adj) return res.status(404).json({ success: false, error: 'Adjustment not found' });
-    if (adj.status !== 'Posted') return res.status(400).json({ success: false, error: 'Adjustment belum di-post' });
-
-    const details = await connection.query('SELECT * FROM InventoryAdjustmentDetails WHERE adjustment_id = ?', [req.params.id]);
+    const details = await connection.query('SELECT * FROM InventoryAdjustmentDetails WHERE adjustment_id = ?', [adjId]);
 
     // Reverse stock for each item
     for (const detail of details) {
@@ -6686,11 +6954,6 @@ app.put('/api/inventory-adjustments/:id/unpost', async (req, res) => {
         if (existingStock.length > 0) {
           const stock = existingStock[0];
           const newQty = parseFloat(stock.quantity || 0) + parseFloat(qtyChange);
-
-          // Note: Average cost is usually NOT recalculated on unpost/void to avoid complexity, 
-          // or properly recalculated if strictly LIFO/FIFO throughout, but here we just update qty for simplicity
-          // or maintain same avg cost.
-
           await connection.query(
             'UPDATE ItemStocks SET quantity = ? WHERE item_id = ? AND warehouse_id = ?',
             [newQty, detail.item_id, adj.warehouse_id]
@@ -6702,7 +6965,6 @@ app.put('/api/inventory-adjustments/:id/unpost', async (req, res) => {
     }
 
     // Delete Journal Voucher
-    // First, find the JV ID
     const jvNum = `JV-ADJ-${adj.doc_number}`;
     const jv = await connection.query("SELECT id FROM JournalVouchers WHERE doc_number = ?", [jvNum]);
     if (jv.length > 0) {
@@ -6711,16 +6973,53 @@ app.put('/api/inventory-adjustments/:id/unpost', async (req, res) => {
       await connection.query('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
     }
 
-    // Update status
-    await connection.query(`UPDATE InventoryAdjustments SET status = 'Approved', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+    await connection.query(`UPDATE InventoryAdjustments SET status = 'Approved', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [adjId]);
+    await connection.commit();
 
-    console.log('Adjustment unposted successfully');
     res.json({ success: true, message: 'Adjustment berhasil di-unpost' });
   } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) { }
+    }
     console.error('Error unposting inventory adjustment:', error);
     res.status(500).json({ success: false, error: error.message });
   } finally {
-    if (connection) await connection.close();
+    if (connection) {
+      try { await connection.close(); } catch (e) { }
+    }
+  }
+});
+
+// Unapprove
+app.put('/api/inventory-adjustments/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const adjId = req.params.id;
+    console.log('Unapproving inventory adjustment:', adjId);
+
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM InventoryAdjustments WHERE id = ?', [adjId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Adjustment not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted adjustment. Unpost it first.' });
+
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'inventory-adjustment', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery(`UPDATE InventoryAdjustments SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, adjId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('inventory-adjustment', parseInt(adjId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Adjustment berhasil di-unapprove' : `Adjustment turun ke ${newStatus}` });
+  } catch (error) {
+    console.error('Error unapproving inventory adjustment:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -7310,10 +7609,11 @@ app.put('/api/ar-adjustments/:id/unpost', async (req, res) => {
 app.get('/api/receivings', async (req, res) => {
   try {
     let query = `
-      SELECT r.id, r.doc_number, r.doc_date, r.status, r.remarks, 
+      SELECT r.id, r.doc_number, r.doc_date, r.status, r.remarks, r.current_approval_level,
              p.name as partner_name, l.name as location_name,
              po.doc_number as po_number,
-             (SELECT SUM(quantity) FROM ReceivingDetails WHERE receiving_id = r.id) as total_received
+             (SELECT SUM(quantity) FROM ReceivingDetails WHERE receiving_id = r.id) as total_received,
+             (SELECT SUM(quantity) FROM APInvoiceDetails ad JOIN APInvoices ai ON ad.ap_invoice_id = ai.id WHERE ai.receiving_id = r.id AND ai.status != 'Cancelled') as total_billed
       FROM Receivings r
       LEFT JOIN Partners p ON r.partner_id = p.id
       LEFT JOIN Locations l ON r.location_id = l.id
@@ -7469,8 +7769,37 @@ app.delete('/api/receivings/:id', async (req, res) => {
   }
 });
 
-// Approve (Post)
-app.put('/api/receivings/:id/approve', async (req, res) => {
+// Approve (Advance Workflow)
+app.put('/api/receivings/:id/approve', authenticateToken, async (req, res) => {
+  try {
+    const rxId = req.params.id;
+    const rxData = await executeQuery('SELECT doc_number, doc_date, current_approval_level FROM Receivings WHERE id = ?', [rxId]);
+    if (rxData.length === 0) return res.status(404).json({ success: false, error: 'Receiving tidak ditemukan' });
+    const currentLevel = parseInt(rxData[0].current_approval_level) || 0;
+
+    const approvalCheck = await canUserApprove(req.user.id, 'receiving', 0, currentLevel, 'approve');
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery('UPDATE Receivings SET status = ?, current_approval_level = ?, approved_by = ?, approved_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, req.user.id, rxId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('receiving', parseInt(rxId), rxData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Receiving berhasil di-approve (Final)' : `Receiving disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    console.error('Error approving receiving:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Post (Update Stock and Journal)
+app.put('/api/receivings/:id/post', authenticateToken, async (req, res) => {
   let connection;
   try {
     connection = await odbc.connect(connectionString);
@@ -7485,21 +7814,25 @@ app.put('/api/receivings/:id/approve', async (req, res) => {
     `, [req.params.id]);
 
     if (!rec) return res.status(404).json({ success: false, error: 'Receiving not found' });
-    if (rec.status !== 'Draft') return res.status(400).json({ success: false, error: 'Only Draft can be posted' });
+    if (rec.status !== 'Approved') return res.status(400).json({ success: false, error: 'Hanya dokumen Approved yang bisa di-post' });
     if (!rec.location_id) return res.status(400).json({ success: false, error: 'Location ID is required for posting' });
 
-    const details = await connection.query('SELECT * FROM ReceivingDetails WHERE receiving_id = ?', [req.params.id]);
+    const details = await connection.query('SELECT rd.*, pod.unit_price as po_unit_price FROM ReceivingDetails rd LEFT JOIN PurchaseOrderDetails pod ON rd.item_id = pod.item_id AND pod.po_id = ? WHERE rd.receiving_id = ?', [rec.po_id || 0, req.params.id]);
+
+    let totalAmount = 0;
 
     for (const item of details) {
       // 1. Determine Unit Cost
       let unitCost = 0;
-      if (item.po_detail_id) {
-        const [poDetail] = await connection.query('SELECT unit_price FROM PurchaseOrderDetails WHERE id = ?', [item.po_detail_id]);
-        unitCost = poDetail ? Number(poDetail.unit_price) : 0;
+      if (rec.po_id && item.po_unit_price !== null && item.po_unit_price !== undefined) {
+        unitCost = Number(item.po_unit_price);
       } else {
         const [itemMaster] = await connection.query('SELECT standard_cost FROM Items WHERE id = ?', [item.item_id]);
         unitCost = itemMaster ? Number(itemMaster.standard_cost) : 0;
       }
+      
+      const itemTotal = Number(item.quantity) * unitCost;
+      totalAmount += itemTotal;
 
       // 2. Update Stock
       const stockResult = await connection.query(`
@@ -7537,6 +7870,20 @@ app.put('/api/receivings/:id/approve', async (req, res) => {
     // 3. Update Status
     await connection.query(`UPDATE Receivings SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
 
+    // 4. Create Automated Journal
+    try {
+      const inventoryAcc = await getGlAccount('inventory_account');
+      const apTempAcc = await getGlAccount('ap_temp_account');
+      if (inventoryAcc && apTempAcc && totalAmount > 0) {
+        await createAutomatedJournal('Receiving', req.params.id, rec.doc_number, rec.doc_date, [
+          { coa_id: inventoryAcc, debit: totalAmount, credit: 0, description: 'Inventory Receipt' },
+          { coa_id: apTempAcc, debit: 0, credit: totalAmount, description: 'AP Temporary' }
+        ]);
+      }
+    } catch (jErr) {
+      console.error('Failed to generate receiving journal:', jErr);
+    }
+
     await connection.commit();
     res.json({ success: true, message: 'Receiving posted successfully' });
   } catch (error) {
@@ -7547,8 +7894,8 @@ app.put('/api/receivings/:id/approve', async (req, res) => {
   }
 });
 
-// Unapprove (Unpost)
-app.put('/api/receivings/:id/unapprove', async (req, res) => {
+// Unpost (Revert Stock and Journal)
+app.put('/api/receivings/:id/unpost', authenticateToken, async (req, res) => {
   let connection;
   try {
     connection = await odbc.connect(connectionString);
@@ -7577,7 +7924,19 @@ app.put('/api/receivings/:id/unapprove', async (req, res) => {
     }
 
     // Update Status
-    await connection.query(`UPDATE Receivings SET status = 'Draft', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+    await connection.query(`UPDATE Receivings SET status = 'Approved', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+
+    // Revert Automated Journal
+    try {
+      const checkJurnal = await connection.query('SELECT id FROM JournalVouchers WHERE source_type = ? AND ref_id = ?', ['Receiving', req.params.id]);
+      if (checkJurnal.length > 0) {
+        const jvId = checkJurnal[0].id;
+        await connection.query('DELETE FROM JournalVoucherDetails WHERE jv_id = ?', [jvId]);
+        await connection.query('DELETE FROM JournalVouchers WHERE id = ?', [jvId]);
+      }
+    } catch (jErr) {
+      console.error('Failed to delete receiving journal:', jErr);
+    }
 
     await connection.commit();
     res.json({ success: true, message: 'Receiving unposted successfully' });
@@ -7586,6 +7945,36 @@ app.put('/api/receivings/:id/unapprove', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   } finally {
     if (connection) await connection.close();
+  }
+});
+
+// Unapprove (Revert Workflow)
+app.put('/api/receivings/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const rxId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM Receivings WHERE id = ?', [rxId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted receiving. Unpost it first.' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'receiving', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery('UPDATE Receivings SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?', [newStatus, newLevel, rxId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('receiving', parseInt(rxId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Receiving berhasil di-unapprove (Kembali ke Draft)' : `Receiving turun ke ${newStatus}` });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -7865,95 +8254,113 @@ app.delete('/api/location-transfers/:id', async (req, res) => {
 });
 
 // Approve/Post
-app.post('/api/location-transfers/:id/approve', async (req, res) => {
+app.post('/api/location-transfers/:id/approve', authenticateToken, async (req, res) => {
   const { id } = req.params;
   let connection;
   try {
-    connection = await odbc.connect(connectionString);
-    await connection.beginTransaction();
+    const txData = await executeQuery('SELECT doc_number, doc_date, current_approval_level, status FROM LocationTransfers WHERE id = ?', [id]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Transfer not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Transfer cannot be approved' });
 
-    // 1. Get Transfer
-    const transfer = await connection.query(`
-      SELECT lt.*, l_src.name as source_location_name 
-      FROM LocationTransfers lt
-      JOIN Locations l_src ON lt.source_location_id = l_src.id
-      WHERE lt.id = ?
-    `, [id]);
-
-    if (transfer.length === 0) throw new Error('Transfer not found');
-    if (transfer[0].status !== 'Draft') throw new Error('Transfer not in Draft status');
-
-    const details = await connection.query(`
-        SELECT ltd.*, i.name as item_name 
-        FROM LocationTransferDetails ltd
-        JOIN Items i ON ltd.item_id = i.id
-        WHERE ltd.transfer_id = ?
-    `, [id]);
-
-    const srcLocId = transfer[0].source_location_id;
-    const dstLocId = transfer[0].destination_location_id;
-    const srcLocName = transfer[0].source_location_name;
-
-    // Get Warehouse IDs for Locations
-    const srcLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [srcLocId]);
-    const dstLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [dstLocId]);
-
-    const srcWhId = srcLoc[0]?.warehouse_id;
-    const dstWhId = dstLoc[0]?.warehouse_id;
-
-    if (!srcWhId || !dstWhId) {
-      throw new Error('Invalid Locations (Warehouse not found)');
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'location-transfer', 0, currentLevel, 'approve');
+    
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
     }
 
-    // 2. Loop Items and Update Stock
-    for (const item of details) {
-      // Check Source Stock
-      const srcStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, srcWhId, srcLocId]);
-      const currentQty = srcStock.length > 0 ? srcStock[0].quantity : 0;
-      const srcAvgCost = srcStock.length > 0 ? (srcStock[0].average_cost || 0) : 0;
+    const newStatus = approvalCheck.isSuperAdmin ? 'Posted' : getStatusAfterApprove(approvalCheck, 'Posted');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
 
-      if (currentQty < item.quantity) {
-        throw new Error(`Stok tidak cukup untuk item ${item.item_name} di Lokasi ${srcLocName}. Stok: ${currentQty}, Butuh: ${item.quantity}`);
+    if (newStatus === 'Posted') {
+      connection = await odbc.connect(connectionString);
+      await connection.beginTransaction();
+
+      // 1. Get Transfer
+      const transfer = await connection.query(`
+        SELECT lt.*, l_src.name as source_location_name 
+        FROM LocationTransfers lt
+        JOIN Locations l_src ON lt.source_location_id = l_src.id
+        WHERE lt.id = ?
+      `, [id]);
+
+      const details = await connection.query(`
+          SELECT ltd.*, i.name as item_name 
+          FROM LocationTransferDetails ltd
+          JOIN Items i ON ltd.item_id = i.id
+          WHERE ltd.transfer_id = ?
+      `, [id]);
+
+      const srcLocId = transfer[0].source_location_id;
+      const dstLocId = transfer[0].destination_location_id;
+      const srcLocName = transfer[0].source_location_name;
+
+      // Get Warehouse IDs for Locations
+      const srcLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [srcLocId]);
+      const dstLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [dstLocId]);
+
+      const srcWhId = srcLoc[0]?.warehouse_id;
+      const dstWhId = dstLoc[0]?.warehouse_id;
+
+      if (!srcWhId || !dstWhId) {
+        throw new Error('Invalid Locations (Warehouse not found)');
       }
 
-      // Decrease Source (Cost per unit remains same)
-      await connection.query(`UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, item.item_id, srcWhId, srcLocId]);
+      // 2. Loop Items and Update Stock
+      for (const item of details) {
+        // Check Source Stock
+        const srcStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, srcWhId, srcLocId]);
+        const currentQty = srcStock.length > 0 ? srcStock[0].quantity : 0;
+        const srcAvgCost = srcStock.length > 0 ? (srcStock[0].average_cost || 0) : 0;
 
-      // Increase Destination with Weighted Average Cost Calculation
-      const dstStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, dstWhId, dstLocId]);
-
-      let newDstAvgCost = srcAvgCost; // Default cost for new stock is the incoming cost
-
-      if (dstStock.length > 0) {
-        const dstQty = dstStock[0].quantity;
-        const dstCost = dstStock[0].average_cost || 0;
-
-        // Weighted Average: ((OldQty * OldCost) + (TransferQty * TransferCost)) / NewTotalQty
-        const totalQty = dstQty + item.quantity;
-
-        // Handle potential division by zero if totalQty is 0 (unlikely here as we are adding positive qty, but safety first)
-        if (totalQty > 0) {
-          const totalValue = (dstQty * dstCost) + (item.quantity * srcAvgCost);
-          newDstAvgCost = totalValue / totalQty;
-        } else {
-          newDstAvgCost = dstCost;
+        if (currentQty < item.quantity) {
+          throw new Error(`Stok tidak cukup untuk item ${item.item_name} di Lokasi ${srcLocName}. Stok: ${currentQty}, Butuh: ${item.quantity}`);
         }
+
+        // Decrease Source (Cost per unit remains same)
+        await connection.query(`UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, item.item_id, srcWhId, srcLocId]);
+
+        // Increase Destination with Weighted Average Cost Calculation
+        const dstStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, dstWhId, dstLocId]);
+
+        let newDstAvgCost = srcAvgCost; // Default cost for new stock is the incoming cost
+
+        if (dstStock.length > 0) {
+          const dstQty = dstStock[0].quantity;
+          const dstCost = dstStock[0].average_cost || 0;
+
+          // Weighted Average: ((OldQty * OldCost) + (TransferQty * TransferCost)) / NewTotalQty
+          const totalQty = dstQty + item.quantity;
+
+          if (totalQty > 0) {
+            const totalValue = (dstQty * dstCost) + (item.quantity * srcAvgCost);
+            newDstAvgCost = totalValue / totalQty;
+          } else {
+            newDstAvgCost = dstCost;
+          }
+        }
+
+        if (dstStock.length === 0) {
+          // Insert with new Avg Cost
+          await connection.query(`INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity, average_cost) VALUES (?, ?, ?, 0, ?)`, [item.item_id, dstWhId, dstLocId, newDstAvgCost]);
+        }
+
+        // Update Qty and Average Cost
+        await connection.query(`UPDATE ItemStocks SET quantity = quantity + ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, newDstAvgCost, item.item_id, dstWhId, dstLocId]);
       }
 
-      if (dstStock.length === 0) {
-        // Insert with new Avg Cost
-        await connection.query(`INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity, average_cost) VALUES (?, ?, ?, 0, ?)`, [item.item_id, dstWhId, dstLocId, newDstAvgCost]);
-      }
-
-      // Update Qty and Average Cost
-      await connection.query(`UPDATE ItemStocks SET quantity = quantity + ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, newDstAvgCost, item.item_id, dstWhId, dstLocId]);
+      // 3. Update Status
+      await connection.query(`UPDATE LocationTransfers SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, req.user.id, id]);
+      await connection.commit();
+    } else {
+      await executeQuery(`UPDATE LocationTransfers SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, req.user.id, id]);
     }
 
-    // 3. Update Status
-    await connection.query(`UPDATE LocationTransfers SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [id]);
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('location-transfer', parseInt(id), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
 
-    await connection.commit();
-    res.json({ success: true, message: 'Transfer posted and stock updated' });
+    res.json({ success: true, message: newStatus === 'Posted' ? 'Transfer posted and stock updated' : `Transfer disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
   } catch (error) {
     if (connection) {
       try { await connection.rollback(); } catch (e) { }
@@ -7969,96 +8376,112 @@ app.post('/api/location-transfers/:id/approve', async (req, res) => {
 
 
 // Unpost/Cancel Post
-app.post('/api/location-transfers/:id/unpost', async (req, res) => {
+app.post('/api/location-transfers/:id/unpost', authenticateToken, async (req, res) => {
   const { id } = req.params;
   let connection;
   try {
-    connection = await odbc.connect(connectionString);
-    await connection.beginTransaction();
-
-    // 1. Get Transfer
-    const transfer = await connection.query(`
-      SELECT lt.*, l_dest.name as destination_location_name 
-      FROM LocationTransfers lt
-      JOIN Locations l_dest ON lt.destination_location_id = l_dest.id
-      WHERE lt.id = ?
-    `, [id]);
-
-    if (transfer.length === 0) throw new Error('Transfer not found');
-    if (transfer[0].status !== 'Posted') throw new Error('Transfer is not Posted');
-
-    const details = await connection.query(`
-        SELECT ltd.*, i.name as item_name 
-        FROM LocationTransferDetails ltd
-        JOIN Items i ON ltd.item_id = i.id
-        WHERE ltd.transfer_id = ?
-    `, [id]);
-
-    const srcLocId = transfer[0].source_location_id;
-    const dstLocId = transfer[0].destination_location_id;
-    const dstLocName = transfer[0].destination_location_name;
-
-    // Get Warehouse IDs
-    const srcLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [srcLocId]);
-    const dstLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [dstLocId]);
-
-    const srcWhId = srcLoc[0]?.warehouse_id;
-    const dstWhId = dstLoc[0]?.warehouse_id;
-
-    if (!srcWhId || !dstWhId) {
-      throw new Error('Invalid Locations (Warehouse not found)');
+    const txData = await executeQuery('SELECT doc_number, doc_date, current_approval_level, status FROM LocationTransfers WHERE id = ?', [id]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Transfer not found' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'location-transfer', 0, currentLevel, 'unapprove');
+    
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
     }
 
-    // 2. Loop Items and Revert Stock
-    for (const item of details) {
-      // Logic Unpost: Source (+), Destination (-)
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
 
-      // Check Destination Stock (Must have enough to return)
-      const dstStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, dstWhId, dstLocId]);
-      const currentDstQty = dstStock.length > 0 ? dstStock[0].quantity : 0;
+    if (txData[0].status === 'Posted') {
+      connection = await odbc.connect(connectionString);
+      await connection.beginTransaction();
 
-      if (currentDstQty < item.quantity) {
-        throw new Error(`Stok tidak cukup di Lokasi Tujuan (${dstLocName}) untuk di-unpost. Stok saat ini: ${currentDstQty}, Harus dikembalikan: ${item.quantity}. Barang mungkin sudah dipindahkan atau terjual.`);
+      // 1. Get Transfer
+      const transfer = await connection.query(`
+        SELECT lt.*, l_dest.name as destination_location_name 
+        FROM LocationTransfers lt
+        JOIN Locations l_dest ON lt.destination_location_id = l_dest.id
+        WHERE lt.id = ?
+      `, [id]);
+
+      const details = await connection.query(`
+          SELECT ltd.*, i.name as item_name 
+          FROM LocationTransferDetails ltd
+          JOIN Items i ON ltd.item_id = i.id
+          WHERE ltd.transfer_id = ?
+      `, [id]);
+
+      const srcLocId = transfer[0].source_location_id;
+      const dstLocId = transfer[0].destination_location_id;
+      const dstLocName = transfer[0].destination_location_name;
+
+      // Get Warehouse IDs
+      const srcLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [srcLocId]);
+      const dstLoc = await connection.query(`SELECT sw.warehouse_id FROM Locations l JOIN SubWarehouses sw ON l.sub_warehouse_id = sw.id WHERE l.id = ?`, [dstLocId]);
+
+      const srcWhId = srcLoc[0]?.warehouse_id;
+      const dstWhId = dstLoc[0]?.warehouse_id;
+
+      if (!srcWhId || !dstWhId) {
+        throw new Error('Invalid Locations (Warehouse not found)');
       }
 
-      // Decrease Destination (Revert addition)
-      await connection.query(`UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, item.item_id, dstWhId, dstLocId]);
+      // 2. Loop Items and Revert Stock
+      for (const item of details) {
+        // Check Destination Stock (Must have enough to return)
+        const dstStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, dstWhId, dstLocId]);
+        const currentDstQty = dstStock.length > 0 ? dstStock[0].quantity : 0;
 
-      // Increase Source (Revert subtraction - with Weighted Average Cost update)
-      // Check if source stock record exists
-      const srcStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, srcWhId, srcLocId]);
-      const dstAvgCost = dstStock.length > 0 ? (dstStock[0].average_cost || 0) : 0;
-
-      let newSrcAvgCost = dstAvgCost; // Default cost returning from destination
-
-      if (srcStock.length > 0) {
-        const srcQty = srcStock[0].quantity;
-        const srcCost = srcStock[0].average_cost || 0;
-
-        const totalQty = srcQty + item.quantity;
-
-        if (totalQty > 0) {
-          const totalValue = (srcQty * srcCost) + (item.quantity * dstAvgCost);
-          newSrcAvgCost = totalValue / totalQty;
-        } else {
-          newSrcAvgCost = srcCost;
+        if (currentDstQty < item.quantity) {
+          throw new Error(`Stok tidak cukup di Lokasi Tujuan (${dstLocName}) untuk di-unpost. Stok saat ini: ${currentDstQty}, Harus dikembalikan: ${item.quantity}. Barang mungkin sudah dipindahkan atau terjual.`);
         }
+
+        // Decrease Destination (Revert addition)
+        await connection.query(`UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, item.item_id, dstWhId, dstLocId]);
+
+        // Increase Source (Revert subtraction - with Weighted Average Cost update)
+        // Check if source stock record exists
+        const srcStock = await connection.query(`SELECT quantity, average_cost FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.item_id, srcWhId, srcLocId]);
+        const dstAvgCost = dstStock.length > 0 ? (dstStock[0].average_cost || 0) : 0;
+
+        let newSrcAvgCost = dstAvgCost; // Default cost returning from destination
+
+        if (srcStock.length > 0) {
+          const srcQty = srcStock[0].quantity;
+          const srcCost = srcStock[0].average_cost || 0;
+
+          const totalQty = srcQty + item.quantity;
+
+          if (totalQty > 0) {
+            const totalValue = (srcQty * srcCost) + (item.quantity * dstAvgCost);
+            newSrcAvgCost = totalValue / totalQty;
+          } else {
+            newSrcAvgCost = srcCost;
+          }
+        }
+
+        if (srcStock.length === 0) {
+          // Insert if not exists
+          await connection.query(`INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity, average_cost) VALUES (?, ?, ?, 0, ?)`, [item.item_id, srcWhId, srcLocId, newSrcAvgCost]);
+        }
+
+        // Update Qty and Average Cost at Source
+        await connection.query(`UPDATE ItemStocks SET quantity = quantity + ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, newSrcAvgCost, item.item_id, srcWhId, srcLocId]);
       }
 
-      if (srcStock.length === 0) {
-        // Insert if not exists
-        await connection.query(`INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity, average_cost) VALUES (?, ?, ?, 0, ?)`, [item.item_id, srcWhId, srcLocId, newSrcAvgCost]);
-      }
-
-      // Update Qty and Average Cost at Source
-      await connection.query(`UPDATE ItemStocks SET quantity = quantity + ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?`, [item.quantity, newSrcAvgCost, item.item_id, srcWhId, srcLocId]);
+      // 3. Update Status back to Draft
+      await connection.query(`UPDATE LocationTransfers SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, id]);
+      await connection.commit();
+    } else {
+      await executeQuery(`UPDATE LocationTransfers SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, id]);
     }
 
-    // 3. Update Status back to Draft
-    await connection.query(`UPDATE LocationTransfers SET status = 'Draft', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [id]);
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('location-transfer', parseInt(id), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
 
-    await connection.commit();
-    res.json({ success: true, message: 'Transfer unposted. Status reverted to Draft.' });
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Transfer unposted. Status reverted to Draft.' : `Transfer turun ke ${newStatus}` });
   } catch (error) {
     if (connection) {
       try { await connection.rollback(); } catch (e) { }
@@ -8499,20 +8922,66 @@ app.delete('/api/item-conversions/:id', async (req, res) => {
   }
 });
 
+// Approve
+app.put('/api/item-conversions/:id/approve', authenticateToken, async (req, res) => {
+  try {
+    const convId = req.params.id;
+    console.log('Approving item conversion:', convId);
+    
+    const txData = await executeQuery('SELECT doc_number, doc_date, total_output_amount, current_approval_level, status FROM ItemConversions WHERE id = ?', [convId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Conversion not found' });
+    if (txData[0].status !== 'Draft' && !txData[0].status.startsWith('Pending')) return res.status(400).json({ success: false, error: 'Cannot be approved' });
+
+    const totalAmount = parseFloat(txData[0].total_output_amount) || 0;
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'item-conversion', totalAmount, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Approved' : getStatusAfterApprove(approvalCheck, 'Approved');
+    const newLevel = approvalCheck.isSuperAdmin ? 99 : (approvalCheck.nextLevel || 1);
+
+    await executeQuery(`UPDATE ItemConversions SET status = ?, current_approval_level = ?, approved_by = ?, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, req.user.id, convId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('item-conversion', parseInt(convId), txData[0].doc_number, 'APPROVE', req.user.id, userName, newLevel);
+
+    res.json({ success: true, message: newStatus === 'Approved' ? 'Konversi item fully approved and ready to post' : `Konversi item disetujui Level ${newLevel}. Menunggu Level ${newLevel + 1}.` });
+  } catch (error) {
+    console.error('Error approving item conversion:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Post item conversion (update stock + create journal)
-app.put('/api/item-conversions/:id/post', async (req, res) => {
+app.put('/api/item-conversions/:id/post', authenticateToken, async (req, res) => {
   let connection;
   try {
-    console.log('Posting item conversion:', req.params.id);
-    connection = await odbc.connect(connectionString);
+    const convId = req.params.id;
+    console.log('Posting item conversion:', convId);
+    
+    const txData = await executeQuery('SELECT * FROM ItemConversions WHERE id = ?', [convId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Conversion not found' });
+    if (txData[0].status !== 'Approved') return res.status(400).json({ success: false, error: 'Only Approved conversions can be posted' });
 
-    // Get conversion header
-    const [conv] = await connection.query('SELECT * FROM ItemConversions WHERE id = ?', [req.params.id]);
-    if (!conv) return res.status(404).json({ success: false, error: 'Conversion not found' });
-    if (conv.status === 'Posted') return res.status(400).json({ success: false, error: 'Sudah di-post' });
+    const totalAmount = parseFloat(txData[0].total_output_amount) || 0;
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'item-conversion', totalAmount, currentLevel, 'approve');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to post this conversion' });
+    }
+
+    connection = await odbc.connect(connectionString);
+    await connection.beginTransaction();
+
+    const conv = txData[0];
 
     // Get details
-    const details = await connection.query('SELECT * FROM ItemConversionDetails WHERE conversion_id = ?', [req.params.id]);
+    const details = await connection.query('SELECT * FROM ItemConversionDetails WHERE conversion_id = ?', [convId]);
     const inputItems = details.filter(d => d.detail_type === 'INPUT');
     const outputItems = details.filter(d => d.detail_type === 'OUTPUT');
 
@@ -8539,20 +9008,20 @@ app.put('/api/item-conversions/:id/post', async (req, res) => {
       const warehouseId = locInfo.warehouse_id;
 
       const [existingStock] = await connection.query(
-        'SELECT * FROM ItemStocks WHERE item_id = ? AND warehouse_id = ?',
-        [item.item_id, warehouseId]
+        'SELECT * FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+        [item.item_id, warehouseId, item.location_id]
       );
 
       if (existingStock) {
         const newQty = parseFloat(existingStock.quantity || 0) - parseFloat(item.quantity);
         await connection.query(
-          'UPDATE ItemStocks SET quantity = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ?',
-          [newQty, item.item_id, warehouseId]
+          'UPDATE ItemStocks SET quantity = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+          [newQty, item.item_id, warehouseId, item.location_id]
         );
       } else {
         await connection.query(
-          'INSERT INTO ItemStocks (item_id, warehouse_id, quantity) VALUES (?, ?, ?)',
-          [item.item_id, warehouseId, -parseFloat(item.quantity)]
+          'INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity) VALUES (?, ?, ?, ?)',
+          [item.item_id, warehouseId, item.location_id, -parseFloat(item.quantity)]
         );
       }
     }
@@ -8577,8 +9046,8 @@ app.put('/api/item-conversions/:id/post', async (req, res) => {
       const warehouseId = locInfo.warehouse_id;
 
       const [existingStock] = await connection.query(
-        'SELECT * FROM ItemStocks WHERE item_id = ? AND warehouse_id = ?',
-        [item.item_id, warehouseId]
+        'SELECT * FROM ItemStocks WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+        [item.item_id, warehouseId, item.location_id]
       );
 
       if (existingStock) {
@@ -8590,20 +9059,18 @@ app.put('/api/item-conversions/:id/post', async (req, res) => {
         const newAvgCost = newQty > 0 ? (oldValue + addValue) / newQty : item.unit_cost;
 
         await connection.query(
-          'UPDATE ItemStocks SET quantity = ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ?',
-          [newQty, newAvgCost, item.item_id, warehouseId]
+          'UPDATE ItemStocks SET quantity = ?, average_cost = ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+          [newQty, newAvgCost, item.item_id, warehouseId, item.location_id]
         );
       } else {
         await connection.query(
-          'INSERT INTO ItemStocks (item_id, warehouse_id, quantity, average_cost) VALUES (?, ?, ?, ?)',
-          [item.item_id, warehouseId, item.quantity, item.unit_cost]
+          'INSERT INTO ItemStocks (item_id, warehouse_id, location_id, quantity, average_cost) VALUES (?, ?, ?, ?, ?)',
+          [item.item_id, warehouseId, item.location_id, item.quantity, item.unit_cost]
         );
       }
     }
 
     // ===================== CREATE JOURNAL =====================
-    // Get inventory account
-    // Get inventory account
     const invAccResult = await connection.query("SELECT TOP 1 id FROM Accounts WHERE type = 'ASSET' AND (name LIKE '%Persediaan%' OR name LIKE '%Inventory%')");
     const inventoryAccountId = invAccResult.length > 0 ? invAccResult[0].id : null;
 
@@ -8626,20 +9093,16 @@ app.put('/api/item-conversions/:id/post', async (req, res) => {
 
       const jvResult = await connection.query('SELECT @@IDENTITY as id');
       const jvId = Number(jvResult[0].id);
-
-      // Simplified journal: credit for input value, debit for output value
-      // ... (Journal Details logic remains same but logs added if needed) ...
-
-      // ...
     }
 
-    // Update status
-    console.log('Updating status to Posted...');
-    await connection.query(`UPDATE ItemConversions SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+    await connection.query(`UPDATE ItemConversions SET status = 'Posted', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [convId]);
+    await connection.commit();
 
-    console.log('Item conversion posted successfully');
     res.json({ success: true, message: 'Konversi item berhasil di-post' });
   } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) { }
+    }
     console.error('Error posting item conversion FULL DETAILS:', error);
     res.status(500).json({ success: false, error: 'Database Error: ' + error.message });
   } finally {
@@ -8647,17 +9110,25 @@ app.put('/api/item-conversions/:id/post', async (req, res) => {
   }
 });
 
-// Unpost item conversion (reverse stock + delete journal)
-app.put('/api/item-conversions/:id/unpost', async (req, res) => {
+app.put('/api/item-conversions/:id/unpost', authenticateToken, async (req, res) => {
   let connection;
   try {
+    const convId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM ItemConversions WHERE id = ?', [convId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Conversion not found' });
+    if (txData[0].status !== 'Posted') return res.status(400).json({ success: false, error: 'Only Posted conversions can be unposted' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'item-conversion', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to unpost this conversion' });
+    }
+
     connection = await odbc.connect(connectionString);
+    await connection.beginTransaction();
 
-    const [conv] = await connection.query('SELECT * FROM ItemConversions WHERE id = ?', [req.params.id]);
-    if (!conv) return res.status(404).json({ success: false, error: 'Conversion not found' });
-    if (conv.status !== 'Posted') return res.status(400).json({ success: false, error: 'Dokumen belum di-post' });
-
-    const details = await connection.query('SELECT * FROM ItemConversionDetails WHERE conversion_id = ?', [req.params.id]);
+    const details = await connection.query('SELECT * FROM ItemConversionDetails WHERE conversion_id = ?', [convId]);
     const inputItems = details.filter(d => d.detail_type === 'INPUT');
     const outputItems = details.filter(d => d.detail_type === 'OUTPUT');
 
@@ -8665,7 +9136,6 @@ app.put('/api/item-conversions/:id/unpost', async (req, res) => {
     for (const item of inputItems) {
       if (!item.location_id) continue;
 
-      // Find warehouse for this location
       const [locInfo] = await connection.query(`
         SELECT w.id as warehouse_id
         FROM Locations l
@@ -8676,8 +9146,8 @@ app.put('/api/item-conversions/:id/unpost', async (req, res) => {
 
       if (locInfo) {
         await connection.query(
-          'UPDATE ItemStocks SET quantity = quantity + ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ?',
-          [item.quantity, item.item_id, locInfo.warehouse_id]
+          'UPDATE ItemStocks SET quantity = quantity + ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+          [item.quantity, item.item_id, locInfo.warehouse_id, item.location_id]
         );
       }
     }
@@ -8685,7 +9155,6 @@ app.put('/api/item-conversions/:id/unpost', async (req, res) => {
     for (const item of outputItems) {
       if (!item.location_id) continue;
 
-      // Find warehouse for this location
       const [locInfo] = await connection.query(`
         SELECT w.id as warehouse_id
         FROM Locations l
@@ -8696,25 +9165,59 @@ app.put('/api/item-conversions/:id/unpost', async (req, res) => {
 
       if (locInfo) {
         await connection.query(
-          'UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ?',
-          [item.quantity, item.item_id, locInfo.warehouse_id]
+          'UPDATE ItemStocks SET quantity = quantity - ?, last_updated = CURRENT TIMESTAMP WHERE item_id = ? AND warehouse_id = ? AND location_id = ?',
+          [item.quantity, item.item_id, locInfo.warehouse_id, item.location_id]
         );
       }
     }
 
     // Delete journal
-    await connection.query("DELETE FROM JournalVoucherDetails WHERE jv_id IN (SELECT id FROM JournalVouchers WHERE source_type = 'ITEM_CONVERSION' AND ref_id = ?)", [req.params.id]);
-    await connection.query("DELETE FROM JournalVouchers WHERE source_type = 'ITEM_CONVERSION' AND ref_id = ?", [req.params.id]);
+    await connection.query("DELETE FROM JournalVoucherDetails WHERE jv_id IN (SELECT id FROM JournalVouchers WHERE source_type = 'ITEM_CONVERSION' AND ref_id = ?)", [convId]);
+    await connection.query("DELETE FROM JournalVouchers WHERE source_type = 'ITEM_CONVERSION' AND ref_id = ?", [convId]);
 
-    // Update status
-    await connection.query(`UPDATE ItemConversions SET status = 'Draft', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [req.params.id]);
+    await connection.query(`UPDATE ItemConversions SET status = 'Approved', updated_at = CURRENT TIMESTAMP WHERE id = ?`, [convId]);
+    await connection.commit();
 
     res.json({ success: true, message: 'Konversi item berhasil di-unpost' });
   } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) { }
+    }
     console.error('Error unposting item conversion:', error);
     res.status(500).json({ success: false, error: error.message });
   } finally {
     if (connection) await connection.close();
+  }
+});
+
+// Unapprove
+app.put('/api/item-conversions/:id/unapprove', authenticateToken, async (req, res) => {
+  try {
+    const convId = req.params.id;
+    const txData = await executeQuery('SELECT doc_number, current_approval_level, status FROM ItemConversions WHERE id = ?', [convId]);
+    if (txData.length === 0) return res.status(404).json({ success: false, error: 'Conversion not found' });
+    if (txData[0].status === 'Posted') return res.status(400).json({ success: false, error: 'Cannot unapprove a Posted conversion. Unpost it first.' });
+    
+    const currentLevel = parseInt(txData[0].current_approval_level) || 0;
+    const approvalCheck = await canUserApprove(req.user.id, 'item-conversion', 0, currentLevel, 'unapprove');
+
+    if (!approvalCheck.allowed) {
+      return res.status(403).json({ success: false, error: approvalCheck.reason });
+    }
+
+    const newStatus = approvalCheck.isSuperAdmin ? 'Draft' : getStatusAfterUnapprove(approvalCheck);
+    const newLevel = approvalCheck.isSuperAdmin ? 0 : (approvalCheck.nextLevel || 0);
+
+    await executeQuery(`UPDATE ItemConversions SET status = ?, current_approval_level = ?, approved_by = NULL, updated_at = CURRENT TIMESTAMP WHERE id = ?`, [newStatus, newLevel, convId]);
+
+    const userInfo = await executeQuery('SELECT full_name FROM Users WHERE id = ?', [req.user.id]);
+    const userName = userInfo.length > 0 ? userInfo[0].full_name : req.user.username;
+    await logApproval('item-conversion', parseInt(convId), txData[0].doc_number, 'UNAPPROVE', req.user.id, userName, currentLevel);
+
+    res.json({ success: true, message: newStatus === 'Draft' ? 'Konversi item berhasil di-unapprove' : `Konversi item turun ke ${newStatus}` });
+  } catch (error) {
+    console.error('Error unapproving item conversion:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -8724,7 +9227,7 @@ app.post('/api/inventory/recalculate', async (req, res) => {
   let connection;
   try {
     const { warehouse_id, item_id } = req.body || {};
-    console.log('🔄 Starting Stock Recalculation...', { warehouse_id, item_id });
+    console.log('ðŸ”„ Starting Stock Recalculation...', { warehouse_id, item_id });
 
     connection = await odbc.connect(connectionString);
     await connection.beginTransaction();
@@ -10135,12 +10638,262 @@ app.get('/api/price-lists-active', async (req, res) => {
   }
 });
 
+// ==================== APPROVAL SYSTEM ====================
+
+// Helper: Validate if user can approve a transaction type (multi-level support)
+// currentLevel = current_approval_level dari transaksi (0=Draft, 1=L1 done, dst)
+// action = 'approve' | 'unapprove'
+async function canUserApprove(userId, transactionType, amount = 0, currentLevel = 0, action = 'approve') {
+  try {
+    // 1. Check if user is Super Admin (bypass)
+    const userRows = await executeQuery(
+      "SELECT u.id, r.name as role_name FROM Users u LEFT JOIN Roles r ON u.role_id = r.id WHERE u.id = ?",
+      [userId]
+    );
+    const isSuperAdmin = userRows.length > 0 && userRows[0].role_name === 'Super Admin';
+    if (isSuperAdmin) {
+      return { allowed: true, reason: 'Super Admin bypass', isSuperAdmin: true };
+    }
+
+    // 2. Check if approval is required for this transaction type
+    const settings = await executeQuery(
+      "SELECT * FROM ApprovalSettings WHERE transaction_type = ? AND active = 'Y'",
+      [transactionType]
+    );
+    if (settings.length === 0) {
+      return { allowed: true, reason: 'No approval setting configured' };
+    }
+    if (settings[0].require_approval !== 'Y') {
+      return { allowed: true, reason: 'Approval not required for this type' };
+    }
+
+    const approvalMode = settings[0].approval_mode || 'any'; // 'sequential' or 'any'
+    const maxLevels = parseInt(settings[0].max_levels) || 1;
+
+    // 3. Check if user is in ApprovalUsers for this setting
+    const approvers = await executeQuery(
+      "SELECT * FROM ApprovalUsers WHERE approval_setting_id = ? AND user_id = ? AND active = 'Y'",
+      [settings[0].id, userId]
+    );
+    if (approvers.length === 0) {
+      // If no approvers assigned at all, allow everyone (backward compatible)
+      const allApprovers = await executeQuery(
+        "SELECT COUNT(*) as cnt FROM ApprovalUsers WHERE approval_setting_id = ? AND active = 'Y'",
+        [settings[0].id]
+      );
+      if (allApprovers[0].cnt === 0) {
+        return { allowed: true, reason: 'No approvers configured, allowing all' };
+      }
+      return { allowed: false, reason: 'Anda tidak memiliki izin untuk meng-approve tipe transaksi ini.' };
+    }
+
+    const approver = approvers[0];
+    const userLevel = parseInt(approver.approval_level) || 1;
+
+    // 4. Check amount range
+    const txAmount = parseFloat(amount) || 0;
+    const minAmt = parseFloat(approver.min_amount) || 0;
+    const maxAmt = parseFloat(approver.max_amount) || 999999999999;
+
+    if (txAmount > 0 && (txAmount < minAmt || txAmount > maxAmt)) {
+      return {
+        allowed: false,
+        reason: `Nominal transaksi (${txAmount.toLocaleString('id-ID')}) di luar batas approval Anda (${minAmt.toLocaleString('id-ID')} - ${maxAmt.toLocaleString('id-ID')}).`
+      };
+    }
+
+    // 5. Mode-specific validation
+    if (approvalMode === 'any') {
+      // ANY mode: any assigned approver can approve/unapprove directly
+      if (action === 'approve') {
+        return { allowed: true, approvalLevel: userLevel, nextLevel: maxLevels, isFinal: true, mode: 'any' };
+      } else {
+        return { allowed: true, approvalLevel: userLevel, nextLevel: 0, isFinal: true, mode: 'any' };
+      }
+    } else {
+      // SEQUENTIAL mode: must follow level order
+      if (action === 'approve') {
+        const expectedLevel = currentLevel + 1;
+        if (userLevel !== expectedLevel) {
+          return {
+            allowed: false,
+            reason: `Approval harus berurutan. Saat ini menunggu Level ${expectedLevel}, Anda adalah Level ${userLevel}.`
+          };
+        }
+        const nextLevel = currentLevel + 1;
+        const isFinal = nextLevel >= maxLevels;
+        return { allowed: true, approvalLevel: userLevel, nextLevel, isFinal, mode: 'sequential' };
+      } else {
+        // Unapprove: must go in reverse order (highest approved level first)
+        if (userLevel !== currentLevel) {
+          return {
+            allowed: false,
+            reason: `Unapprove harus berurutan dari level tertinggi. Saat ini Level ${currentLevel} yang harus unapprove, Anda adalah Level ${userLevel}.`
+          };
+        }
+        const nextLevel = currentLevel - 1;
+        const isFinal = nextLevel <= 0;
+        return { allowed: true, approvalLevel: userLevel, nextLevel, isFinal, mode: 'sequential' };
+      }
+    }
+  } catch (error) {
+    console.error('canUserApprove error:', error);
+    return { allowed: true, reason: 'Error checking approval, allowing by default' };
+  }
+}
+
+// Helper: Get status string after approval action
+function getStatusAfterApprove(result, originalApprovedStatus = 'Approved') {
+  if (result.isFinal) return originalApprovedStatus;
+  return `Pending L${result.nextLevel + 1}`;
+}
+
+function getStatusAfterUnapprove(result) {
+  if (result.isFinal || result.mode === 'any') return 'Draft';
+  return `Pending L${result.nextLevel + 1}`;
+}
+
+// Helper: Log approval action
+async function logApproval(transactionType, transactionId, docNumber, action, userId, userName, level = 0, notes = '') {
+  try {
+    await executeQuery(
+      "INSERT INTO ApprovalLogs (transaction_type, transaction_id, doc_number, action, approval_level, user_id, user_name, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [transactionType, transactionId, docNumber || '', action, level, userId, userName || '', notes]
+    );
+  } catch (error) {
+    console.error('logApproval error:', error);
+  }
+}
+
+// GET all approval settings with assigned users
+app.get('/api/approval-settings', authenticateToken, async (req, res) => {
+  try {
+    const settings = await executeQuery("SELECT * FROM ApprovalSettings ORDER BY transaction_type");
+
+    // Fetch all approval users with user info
+    const allUsers = await executeQuery(`
+      SELECT au.*, u.username, u.full_name, aps.transaction_type
+      FROM ApprovalUsers au
+      JOIN Users u ON au.user_id = u.id
+      JOIN ApprovalSettings aps ON au.approval_setting_id = aps.id
+      WHERE au.active = 'Y'
+      ORDER BY au.approval_level, u.full_name
+    `);
+
+    // Attach users to each setting
+    const result = settings.map(s => ({
+      ...s,
+      users: allUsers.filter(u => u.approval_setting_id === s.id)
+    }));
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// UPDATE approval setting (require_approval, active, approval_mode, max_levels)
+app.put('/api/approval-settings/:id', authenticateToken, async (req, res) => {
+  try {
+    const { require_approval, active, description, approval_mode, max_levels } = req.body;
+    await executeQuery(
+      "UPDATE ApprovalSettings SET require_approval = ?, active = ?, description = ?, approval_mode = ?, max_levels = ? WHERE id = ?",
+      [require_approval || 'Y', active || 'Y', description, approval_mode || 'any', parseInt(max_levels) || 1, req.params.id]
+    );
+    res.json({ success: true, message: 'Approval setting berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ADD user to approval setting
+app.post('/api/approval-settings/:id/users', authenticateToken, async (req, res) => {
+  try {
+    const { user_id, approval_level, min_amount, max_amount } = req.body;
+
+    // Check if already exists
+    const existing = await executeQuery(
+      "SELECT id FROM ApprovalUsers WHERE approval_setting_id = ? AND user_id = ? AND active = 'Y'",
+      [req.params.id, user_id]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'User sudah ditambahkan sebagai approver' });
+    }
+
+    await executeQuery(
+      "INSERT INTO ApprovalUsers (approval_setting_id, user_id, approval_level, min_amount, max_amount, active) VALUES (?, ?, ?, ?, ?, 'Y')",
+      [req.params.id, user_id, approval_level || 1, min_amount || 0, max_amount || 999999999999]
+    );
+    res.json({ success: true, message: 'Approver berhasil ditambahkan' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// UPDATE approval user (level, amount range)
+app.put('/api/approval-users/:id', authenticateToken, async (req, res) => {
+  try {
+    const { approval_level, min_amount, max_amount } = req.body;
+    await executeQuery(
+      "UPDATE ApprovalUsers SET approval_level = ?, min_amount = ?, max_amount = ? WHERE id = ?",
+      [approval_level || 1, min_amount || 0, max_amount || 999999999999, req.params.id]
+    );
+    res.json({ success: true, message: 'Approver berhasil diupdate' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// REMOVE user from approval setting
+app.delete('/api/approval-users/:id', authenticateToken, async (req, res) => {
+  try {
+    await executeQuery("UPDATE ApprovalUsers SET active = 'N' WHERE id = ?", [req.params.id]);
+    res.json({ success: true, message: 'Approver berhasil dihapus' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// CHECK if current user can approve a transaction type
+app.get('/api/approval-check/:transactionType', authenticateToken, async (req, res) => {
+  try {
+    const result = await canUserApprove(req.user.id, req.params.transactionType);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET approval logs for a transaction
+app.get('/api/approval-logs', authenticateToken, async (req, res) => {
+  try {
+    const { transaction_type, transaction_id } = req.query;
+    let query = "SELECT * FROM ApprovalLogs WHERE 1=1";
+    const params = [];
+
+    if (transaction_type) {
+      query += " AND transaction_type = ?";
+      params.push(transaction_type);
+    }
+    if (transaction_id) {
+      query += " AND transaction_id = ?";
+      params.push(transaction_id);
+    }
+
+    query += " ORDER BY created_at DESC";
+    const logs = await executeQuery(query, params);
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 app.listen(PORT, async () => {
-  console.log(`🚀 JAGATRAYA Unified Server berjalan di http://localhost:${PORT}`);
-  console.log('   📦 ERP Module - Ready');
-  console.log('   👥 HR  Module - Ready (/api/hr/...)');
-  console.log('   🛒 POS Module - Ready (/api/pos/...)');
+  console.log(`ðŸš€ JAGATRAYA Unified Server berjalan di http://localhost:${PORT}`);
+  console.log('   ðŸ“¦ ERP Module - Ready');
+  console.log('   ðŸ‘¥ HR  Module - Ready (/api/hr/...)');
+  console.log('   ðŸ›’ POS Module - Ready (/api/pos/...)');
   await connectDatabase();
 });
 

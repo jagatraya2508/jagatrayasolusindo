@@ -83,6 +83,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './pages/auth/Login';
 import UserList from './pages/settings/UserList';
 import RoleList from './pages/settings/RoleList';
+import ApprovalSettingsList from './pages/settings/ApprovalSettingsList';
 import ProtectedRoute from './components/ProtectedRoute';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
@@ -97,7 +98,23 @@ function AppContent() {
 
     useEffect(() => {
         checkConnection();
+        fetchThemeColors();
     }, []);
+
+    const fetchThemeColors = async () => {
+        try {
+            const response = await fetch('/api/system-settings');
+            const data = await response.json();
+            if (data.success && data.data) {
+                const root = document.documentElement;
+                if (data.data.SIDEBAR_COLOR_FROM) root.style.setProperty('--sidebar-bg-from', data.data.SIDEBAR_COLOR_FROM);
+                if (data.data.SIDEBAR_COLOR_TO) root.style.setProperty('--sidebar-bg-to', data.data.SIDEBAR_COLOR_TO);
+                if (data.data.PAGE_BG_COLOR) root.style.setProperty('--page-bg', data.data.PAGE_BG_COLOR);
+            }
+        } catch (error) {
+            console.error('Error fetching theme colors:', error);
+        }
+    };
 
     // Live Tracking Reporter
     useEffect(() => {
@@ -277,6 +294,8 @@ function AppContent() {
                 return <GlSettings />;
             case 'system-settings':
                 return <SystemSettings />;
+            case 'approval-settings':
+                return <ApprovalSettingsList />;
             case 'system-generated-journal':
                 return <SystemGeneratedJournalList />;
             case 'recalculate-inventory':

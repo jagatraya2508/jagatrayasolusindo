@@ -652,6 +652,9 @@ function Sidebar({ currentPage, setCurrentPage }) {
                             <div className={`nav-item ${currentPage === 'gl-settings' ? 'active' : ''}`} onClick={() => setCurrentPage('gl-settings')}>
                                 {icons['settings']} <span>GL Settings</span>
                             </div>
+                            <div className={`nav-item ${currentPage === 'approval-settings' ? 'active' : ''}`} onClick={() => setCurrentPage('approval-settings')}>
+                                {icons['settings']} <span>Pengaturan Approval</span>
+                            </div>
                         </>
                     )}
                 </div>

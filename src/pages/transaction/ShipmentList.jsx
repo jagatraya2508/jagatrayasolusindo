@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 
 import { usePeriod } from '../../context/PeriodContext';
+import { useAuth } from '../../context/AuthContext';
 
 function ShipmentList() {
     const { selectedPeriod } = usePeriod();
+    const { token } = useAuth();
+    const [canApprove, setCanApprove] = useState(false);
     const [shipments, setShipments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -30,7 +33,18 @@ function ShipmentList() {
     useEffect(() => {
         fetchData();
         fetchMasterData();
+        checkApprovalPermission();
     }, [selectedPeriod]);
+
+    const checkApprovalPermission = async () => {
+        try {
+            const res = await fetch('/api/approval-check/shipment', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setCanApprove(data.allowed === true);
+        } catch { setCanApprove(false); }
+    };
 
     const fetchData = async () => {
         setLoading(true);
@@ -209,36 +223,56 @@ function ShipmentList() {
         }
     };
 
-    const handlePost = async (id) => {
-        if (!confirm('Post Shipment ini? Stok akan berkurang dan jurnal terbentuk.')) return;
+    const handleApprove = async (id) => {
+        if (!confirm('Approve Shipment ini?')) return;
         try {
-            const response = await fetch(`/api/shipments/${id}/approve`, { method: 'PUT' });
+            const response = await fetch(`/api/shipments/${id}/approve`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
-            if (data.success) {
-                alert(data.message);
-                fetchData();
-            } else {
-                alert('Error: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error: ' + error.message);
-        }
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
+    };
+
+    const handlePost = async (id) => {
+        if (!confirm('Post Shipment ini? Jurnal otomatis akan terbentuk.')) return;
+        try {
+            const response = await fetch(`/api/shipments/${id}/post`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
     };
 
     const handleUnpost = async (id) => {
-        if (!confirm('Unpost Shipment ini? Status kembali ke Draft dan jurnal dihapus.')) return;
+        if (!confirm('Unpost Shipment ini? Jurnal akan dihapus.')) return;
         try {
-            const response = await fetch(`/api/shipments/${id}/unapprove`, { method: 'PUT' });
+            const response = await fetch(`/api/shipments/${id}/unpost`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
-            if (data.success) {
-                alert(data.message);
-                fetchData();
-            } else {
-                alert('Error: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error: ' + error.message);
-        }
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
+    };
+
+    const handleUnapprove = async (id) => {
+        if (!confirm('Unapprove Shipment ini?')) return;
+        try {
+            const response = await fetch(`/api/shipments/${id}/unapprove`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
     };
 
     const handleAddItem = () => {
@@ -519,6 +553,7 @@ function ShipmentList() {
                                 <th>No. Dokumen</th>
                                 <th>Customer</th>
                                 <th>Dari SO</th>
+                                <th>Tagihan / Invoice</th>
                                 <th>Status</th>
                                 <th style={{ textAlign: 'center' }}>Aksi</th>
                             </tr>
@@ -526,46 +561,123 @@ function ShipmentList() {
                         <tbody>
                             {shipments.length === 0 ? (
                                 <tr>
-                                    <td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>Belum ada data Shipment</td>
+                                    <td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>Belum ada data Shipment</td>
                                 </tr>
                             ) : (
                                 shipments.map(s => (
                                     <tr key={s.id}>
                                         <td>{formatDate(s.doc_date)}</td>
                                         <td><strong>{s.doc_number}</strong></td>
-                                        <td>{s.customer_name || '-'}</td>
+                                        <td>{s.customer_name || s.partner_name || '-'}</td>
                                         <td>{s.so_number || '-'}</td>
                                         <td>
-                                            <span className={`badge ${s.status === 'Draft' ? 'badge-warning' : 'badge-success'}`}>
+                                            {s.ar_invoice_numbers && s.ar_invoice_numbers.trim().length > 0 ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    {s.ar_invoice_numbers.split(', ').map((inv, idx) => {
+                                                        const statuses = (s.ar_invoice_statuses || '').split(', ');
+                                                        const st = statuses[idx] || 'Draft';
+                                                        const badgeClass = st === 'Paid' ? 'badge-success' : st === 'Partial' ? 'badge-warning' : st === 'Posted' ? 'badge-info' : 'badge-secondary';
+                                                        return (
+                                                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem' }}>
+                                                                <span style={{ fontWeight: 500 }}>{inv}</span>
+                                                                <span className={`badge ${badgeClass}`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{st}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {parseFloat(s.total_paid || 0) > 0 && (
+                                                        <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 500, marginTop: '2px' }}>
+                                                            💰 Terbayar: Rp {parseFloat(s.total_paid).toLocaleString('id-ID')}
+                                                        </div>
+                                                    )}
+                                                    {s.payment_doc_numbers && s.payment_doc_numbers.trim().length > 0 && (
+                                                        <div style={{ fontSize: '0.75rem', color: '#2563eb', marginTop: '2px' }}>
+                                                            🧾 Pembayaran: {s.payment_doc_numbers}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span style={{ color: '#aaa', fontSize: '0.85rem' }}>-</span>
+                                            )}
+                                        </td>
+                                        <td>
+                                            <span className={`badge ${s.status === 'Draft' ? 'badge-warning' : (s.status.startsWith('Pending') ? 'badge-info' : 'badge-success')}`}>
                                                 {s.status}
                                             </span>
                                         </td>
                                         <td style={{ textAlign: 'center' }}>
-                                            {s.status === 'Draft' ? (
-                                                <>
-                                                    <button className="btn-icon" onClick={() => handlePost(s.id)} title="Post" style={{ color: 'green', marginRight: '5px' }}>📮</button>
-                                                    <button className="btn-icon" onClick={() => handleEdit(s.id)} title="Edit" style={{ marginRight: '5px' }}>✏️</button>
-                                                    <button className="btn-icon" onClick={() => handleDelete(s.id)} title="Hapus">🗑️</button>
-                                                </>
-                                            ) : (
-                                                (() => {
-                                                    const isLocked = parseFloat(s.total_billed || 0) >= parseFloat(s.total_shipped || 0) && parseFloat(s.total_shipped || 0) > 0;
-                                                    return (
-                                                        <>
-                                                            <button
-                                                                className="btn-icon"
-                                                                onClick={() => !isLocked && handleUnpost(s.id)}
-                                                                title={isLocked ? "Terkunci (Sudah ada Tagihan)" : "Unpost"}
-                                                                style={{ color: isLocked ? '#ccc' : 'orange', marginRight: '5px', cursor: isLocked ? 'not-allowed' : 'pointer' }}
-                                                                disabled={isLocked}
-                                                            >
-                                                                🔓
+                                            <div className="action-btn-group">
+                                                {/* Group 1: Approval */}
+                                                {(s.status === 'Draft' || s.status.startsWith('Pending')) && canApprove && (
+                                                    <button className="btn-action approve" onClick={() => handleApprove(s.id)} title="Approve">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+                                                        Approve
+                                                    </button>
+                                                )}
+                                                {s.status.startsWith('Pending') && canApprove && (
+                                                    <button className="btn-action unapprove" onClick={() => handleUnapprove(s.id)} title="Unapprove">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd"/></svg>
+                                                        Unapprove
+                                                    </button>
+                                                )}
+                                                {(s.status === 'Approved' || s.status === 'Posted') && canApprove && (
+                                                    <button className="btn-action unapprove" onClick={() => handleUnapprove(s.id)} disabled={s.status === 'Posted'} title={s.status === 'Posted' ? 'Unpost dulu sebelum unapprove' : 'Unapprove'}>
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd"/></svg>
+                                                        Unapprove
+                                                    </button>
+                                                )}
+
+                                                {/* Separator */}
+                                                {(s.status === 'Approved' || s.status === 'Posted') && canApprove && (
+                                                    <span className="action-separator"></span>
+                                                )}
+
+                                                {/* Group 2: Posting */}
+                                                {s.status === 'Approved' && canApprove && (
+                                                    <button className="btn-action post" onClick={() => handlePost(s.id)} title="Post Jurnal">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+                                                        Posting
+                                                    </button>
+                                                )}
+                                                {s.status === 'Posted' && canApprove && (() => {
+                                                    const hasInvoice = s.ar_invoice_numbers && s.ar_invoice_numbers.trim().length > 0;
+                                                    if (hasInvoice) {
+                                                        return (
+                                                            <button className="btn-action view" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }} title={`Terkunci - Sudah ada tagihan: ${s.ar_invoice_numbers}`}>
+                                                                🔒 Terkunci
                                                             </button>
-                                                            <button className="btn-icon" onClick={() => handleEdit(s.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
-                                                        </>
+                                                        );
+                                                    }
+                                                    return (
+                                                        <button className="btn-action unpost" onClick={() => handleUnpost(s.id)} title="Unpost">
+                                                            <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd"/></svg>
+                                                            Unpost
+                                                        </button>
                                                     );
-                                                })()
-                                            )}
+                                                })()}
+
+                                                {/* Separator */}
+                                                <span className="action-separator"></span>
+
+                                                {/* Group 3: Edit / View / Delete */}
+                                                {s.status === 'Draft' && (
+                                                    <button className="btn-action edit" onClick={() => handleEdit(s.id)} title="Edit">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+                                                        Edit
+                                                    </button>
+                                                )}
+                                                {s.status === 'Draft' && (
+                                                    <button className="btn-action delete" onClick={() => handleDelete(s.id)} title="Hapus">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd"/></svg>
+                                                        Hapus
+                                                    </button>
+                                                )}
+                                                {s.status !== 'Draft' && (
+                                                    <button className="btn-action view" onClick={() => handleEdit(s.id)} title="Lihat Detail">
+                                                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/></svg>
+                                                        Detail
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))

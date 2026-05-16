@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { usePeriod } from '../../context/PeriodContext';
+import { useAuth } from '../../context/AuthContext';
 
 function ItemConversionList() {
     const { selectedPeriod } = usePeriod();
+    const { token } = useAuth();
+    const [canApprove, setCanApprove] = useState(false);
     const [conversions, setConversions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -25,7 +28,18 @@ function ItemConversionList() {
     useEffect(() => {
         fetchData();
         fetchMasterData();
+        checkApprovalPermission();
     }, [selectedPeriod]);
+
+    const checkApprovalPermission = async () => {
+        try {
+            const res = await fetch('/api/approval-check/item-conversion', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setCanApprove(data.allowed === true);
+        } catch { setCanApprove(false); }
+    };
 
     const fetchData = async () => {
         setLoading(true);
@@ -179,36 +193,56 @@ function ItemConversionList() {
         }
     };
 
+    const handleApprove = async (id) => {
+        if (!confirm('Are you sure you want to approve this conversion?')) return;
+        try {
+            const response = await fetch(`/api/item-conversions/${id}/approve`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
+    };
+
     const handlePost = async (id) => {
         if (!confirm('Post Konversi ini? Stok akan diupdate.')) return;
         try {
-            const response = await fetch(`/api/item-conversions/${id}/post`, { method: 'PUT' });
+            const response = await fetch(`/api/item-conversions/${id}/post`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
-            if (data.success) {
-                alert(data.message);
-                fetchData();
-            } else {
-                alert('Error: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error: ' + error.message);
-        }
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
     };
 
     const handleUnpost = async (id) => {
         if (!confirm('Unpost Konversi ini? Stok akan dikembalikan dan jurnal dihapus.')) return;
         try {
-            const response = await fetch(`/api/item-conversions/${id}/unpost`, { method: 'PUT' });
+            const response = await fetch(`/api/item-conversions/${id}/unpost`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
-            if (data.success) {
-                alert(data.message);
-                fetchData();
-            } else {
-                alert('Error: ' + data.error);
-            }
-        } catch (error) {
-            alert('Error: ' + error.message);
-        }
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
+    };
+
+    const handleUnapprove = async (id) => {
+        if (!confirm('Are you sure you want to unapprove this conversion?')) return;
+        try {
+            const response = await fetch(`/api/item-conversions/${id}/unapprove`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            if (data.success) { alert(data.message); fetchData(); }
+            else { alert('Error: ' + (data.reason || data.error)); }
+        } catch (error) { alert('Error: ' + error.message); }
     };
 
     const handleAddInputItem = () => {
@@ -775,23 +809,29 @@ function ItemConversionList() {
                                         <td style={{ textAlign: 'right' }}>{formatMoney(parseFloat(conv.total_input_amount) || 0)}</td>
                                         <td style={{ textAlign: 'right' }}>{formatMoney(parseFloat(conv.total_output_amount) || 0)}</td>
                                         <td>
-                                            <span className={`badge ${getStatusBadge(conv.status)}`}>
-                                                {conv.status}
+                                            <span className={`badge ${conv.status === 'Draft' ? 'badge-warning' : (conv.status.startsWith('Pending') ? 'badge-info' : conv.status === 'Approved' ? 'badge-primary' : 'badge-success')}`} style={conv.status === 'Approved' ? { background: '#10b981', color: 'white' } : {}}>
+                                                {conv.status === 'Approved' ? '✅ Approved' : conv.status === 'Posted' ? '✓ Posted' : conv.status}
                                             </span>
                                         </td>
                                         <td style={{ textAlign: 'center' }}>
-                                            {conv.status === 'Draft' && (
-                                                <>
-                                                    <button className="btn-icon" onClick={() => handlePost(conv.id)} title="Post" style={{ color: 'green', marginRight: '5px' }}>✅</button>
-                                                    <button className="btn-icon" onClick={() => handleEdit(conv.id)} title="Edit" style={{ marginRight: '5px' }}>✏️</button>
-                                                    <button className="btn-icon" onClick={() => handleDelete(conv.id)} title="Hapus">🗑️</button>
-                                                </>
-                                            )}
-                                            {conv.status === 'Posted' && (
-                                                <>
-                                                    <button className="btn-icon" onClick={() => handleUnpost(conv.id)} title="Unpost" style={{ color: 'orange', marginRight: '5px' }}>↩️</button>
+                                            {conv.status === 'Draft' || conv.status.startsWith('Pending') ? (
+                                                <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                                    {canApprove && <button className="btn-icon" onClick={() => handleApprove(conv.id)} title="Approve" style={{ color: 'green' }}>✅</button>}
+                                                    {conv.status === 'Draft' && <button className="btn-icon" onClick={() => handleEdit(conv.id)} title="Edit">✏️</button>}
+                                                    {conv.status === 'Draft' && <button className="btn-icon" onClick={() => handleDelete(conv.id)} title="Hapus">🗑️</button>}
+                                                    {conv.status.startsWith('Pending') && <button className="btn-icon" onClick={() => handleUnapprove(conv.id)} title="Unapprove" style={{ color: 'orange' }}>↩️</button>}
+                                                </div>
+                                            ) : conv.status === 'Approved' ? (
+                                                <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                                    {canApprove && <button className="btn-icon" onClick={() => handlePost(conv.id)} title="Post" style={{ color: 'purple' }}>📤</button>}
+                                                    <button className="btn-icon" onClick={() => handleUnapprove(conv.id)} title="Unapprove" style={{ color: 'orange' }}>↩️</button>
                                                     <button className="btn-icon" onClick={() => handleEdit(conv.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
-                                                </>
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                                                    <button className="btn-icon" onClick={() => handleUnpost(conv.id)} title="Unpost" style={{ color: 'gray' }}>🔓</button>
+                                                    <button className="btn-icon" onClick={() => handleEdit(conv.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
+                                                </div>
                                             )}
                                         </td>
                                     </tr>

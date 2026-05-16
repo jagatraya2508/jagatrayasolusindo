@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 
 import { usePeriod } from '../../context/PeriodContext';
+import { useAuth } from '../../context/AuthContext';
 
 function SalesOrderList() {
     const { selectedPeriod } = usePeriod();
+    const { token } = useAuth();
+    const [canApprove, setCanApprove] = useState(false);
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -35,7 +38,18 @@ function SalesOrderList() {
     useEffect(() => {
         fetchData();
         fetchMasterData();
+        checkApprovalPermission();
     }, [selectedPeriod]);
+
+    const checkApprovalPermission = async () => {
+        try {
+            const res = await fetch('/api/approval-check/sales-order', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setCanApprove(data.allowed === true);
+        } catch { setCanApprove(false); }
+    };
 
     const fetchData = async () => {
         setLoading(true);
@@ -239,26 +253,18 @@ function SalesOrderList() {
     };
 
     const handleApprove = async (id) => {
-        // Since we don't have a specific approve endpoint for SO yet in the provided snippets (only PO was explicitly asked), 
-        // I should probably add one in server/index.js if I want this to work fully.
-        // Wait, I only added it for PO. Let me add it for SO too in server/index.js in next step or now?
-        // Actually, for now let's just use the same pattern but I need to make sure backend supports it.
-        // I didn't add the /approve endpoint for SO in server/index.js yet.
-        // I will add the UI button but it will fail if I don't add the endpoint.
-        // Let's hold off on the Approve button for SO until backend is ready?
-        // NO, better to add backend support now.
-        // But for this tool call, I'll just add the functions. I'll add the backend endpoint in next tool call.
-
         if (!confirm('Approve Sales Order ini? status akan menjadi Approved')) return;
         try {
-            // Reusing the same pattern, assuming I will add the endpoint
-            const response = await fetch(`/api/sales-orders/${id}/approve`, { method: 'PUT' });
+            const response = await fetch(`/api/sales-orders/${id}/approve`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
             if (data.success) {
                 alert(data.message);
                 fetchData();
             } else {
-                alert('Error: ' + data.error);
+                alert('Error: ' + (data.reason || data.error));
             }
         } catch (error) {
             alert('Error: ' + error.message);
@@ -268,13 +274,16 @@ function SalesOrderList() {
     const handleUnapprove = async (id) => {
         if (!confirm('Unapprove Sales Order ini? Status akan kembali menjadi Draft.')) return;
         try {
-            const response = await fetch(`/api/sales-orders/${id}/unapprove`, { method: 'PUT' });
+            const response = await fetch(`/api/sales-orders/${id}/unapprove`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
             if (data.success) {
                 alert(data.message);
                 fetchData();
             } else {
-                alert('Error: ' + data.error);
+                alert('Error: ' + (data.reason || data.error));
             }
         } catch (error) {
             alert('Error: ' + error.message);
@@ -890,14 +899,14 @@ function SalesOrderList() {
                                         <td style={{ textAlign: 'center' }}>
                                             {order.status === 'Draft' ? (
                                                 <>
-                                                    <button className="btn-icon" onClick={() => handleApprove(order.id)} title="Approve" style={{ color: 'green', marginRight: '5px' }}>✅</button>
+                                                    {canApprove && <button className="btn-icon" onClick={() => handleApprove(order.id)} title="Approve" style={{ color: 'green', marginRight: '5px' }}>✅</button>}
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Edit" style={{ marginRight: '5px' }}>✏️</button>
                                                     <button className="btn-icon" onClick={() => handleVoid(order.id)} title="Void" style={{ color: 'red', marginRight: '5px' }}>🚫</button>
                                                     <button className="btn-icon" onClick={() => handleDelete(order.id)} title="Hapus">🗑️</button>
                                                 </>
                                             ) : order.status === 'Approved' ? (
                                                 <>
-                                                    <button className="btn-icon" onClick={() => handleUnapprove(order.id)} title="Unapprove" style={{ color: 'orange', marginRight: '5px' }}>🔓</button>
+                                                    {canApprove && <button className="btn-icon" onClick={() => handleUnapprove(order.id)} title="Unapprove" style={{ color: 'orange', marginRight: '5px' }}>🔓</button>}
                                                     <button className="btn-icon" onClick={() => handleWriteOff(order.id)} title="Write-Off (Selesai Parsial)" style={{ color: 'gray', marginRight: '5px' }}>✂️</button>
                                                     <button className="btn-icon" onClick={() => handleVoid(order.id)} title="Void" style={{ color: 'red', marginRight: '5px' }}>🚫</button>
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>

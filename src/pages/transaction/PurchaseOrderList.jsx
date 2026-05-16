@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 
 import { usePeriod } from '../../context/PeriodContext';
+import { useAuth } from '../../context/AuthContext';
 
 function PurchaseOrderList() {
     const { selectedPeriod } = usePeriod();
+    const { token } = useAuth();
+    const [canApprove, setCanApprove] = useState(false);
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
@@ -28,7 +31,18 @@ function PurchaseOrderList() {
     useEffect(() => {
         fetchData();
         fetchMasterData();
+        checkApprovalPermission();
     }, [selectedPeriod]); // Add selectedPeriod dependency
+
+    const checkApprovalPermission = async () => {
+        try {
+            const res = await fetch('/api/approval-check/purchase-order', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setCanApprove(data.allowed === true);
+        } catch { setCanApprove(false); }
+    };
 
     const fetchData = async () => {
         setLoading(true);
@@ -179,13 +193,16 @@ function PurchaseOrderList() {
     const handleApprove = async (id) => {
         if (!confirm('Approve Purchase Order ini? Status akan menjadi Approved dan tidak bisa diedit lagi.')) return;
         try {
-            const response = await fetch(`/api/purchase-orders/${id}/approve`, { method: 'PUT' });
+            const response = await fetch(`/api/purchase-orders/${id}/approve`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
             if (data.success) {
                 alert(data.message);
                 fetchData();
             } else {
-                alert('Error: ' + data.error);
+                alert('Error: ' + (data.reason || data.error));
             }
         } catch (error) {
             alert('Error: ' + error.message);
@@ -195,13 +212,16 @@ function PurchaseOrderList() {
     const handleUnapprove = async (id) => {
         if (!confirm('Unapprove Purchase Order ini? Status akan kembali menjadi Draft.')) return;
         try {
-            const response = await fetch(`/api/purchase-orders/${id}/unapprove`, { method: 'PUT' });
+            const response = await fetch(`/api/purchase-orders/${id}/unapprove`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
             const data = await response.json();
             if (data.success) {
                 alert(data.message);
                 fetchData();
             } else {
-                alert('Error: ' + data.error);
+                alert('Error: ' + (data.reason || data.error));
             }
         } catch (error) {
             alert('Error: ' + error.message);
@@ -622,13 +642,13 @@ function PurchaseOrderList() {
                                         <td style={{ textAlign: 'center' }}>
                                             {order.status === 'Draft' ? (
                                                 <>
-                                                    <button className="btn-icon" onClick={() => handleApprove(order.id)} title="Approve" style={{ color: 'green', marginRight: '5px' }}>✅</button>
+                                                    {canApprove && <button className="btn-icon" onClick={() => handleApprove(order.id)} title="Approve" style={{ color: 'green', marginRight: '5px' }}>✅</button>}
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Edit" style={{ marginRight: '5px' }}>✏️</button>
                                                     <button className="btn-icon" onClick={() => handleDelete(order.id)} title="Hapus">🗑️</button>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <button
+                                                    {canApprove && <button
                                                         className="btn-icon"
                                                         onClick={() => order.status !== 'Closed' && handleUnapprove(order.id)}
                                                         title={order.status === 'Closed' ? "Closed - Cannot Unapprove" : "Unapprove"}
@@ -641,7 +661,7 @@ function PurchaseOrderList() {
                                                         disabled={order.status === 'Closed'}
                                                     >
                                                         🔓
-                                                    </button>
+                                                    </button>}
                                                     <button className="btn-icon" onClick={() => handleEdit(order.id)} title="Lihat Detail" style={{ color: 'blue' }}>👁️</button>
                                                 </>
                                             )}

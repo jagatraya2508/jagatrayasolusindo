@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../../context/AuthContext';
 
 function LocationTransferList() {
+    const { token } = useAuth();
+    const [canApprove, setCanApprove] = useState(false);
     const [view, setView] = useState('list'); // 'list', 'create', 'detail'
     const [transfers, setTransfers] = useState([]);
     const [locations, setLocations] = useState([]);
@@ -20,7 +23,18 @@ function LocationTransferList() {
         fetchTransfers();
         fetchLocations();
         fetchItems();
+        checkApprovalPermission();
     }, []);
+
+    const checkApprovalPermission = async () => {
+        try {
+            const res = await fetch('/api/approval-check/location-transfer', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            setCanApprove(data.allowed === true);
+        } catch { setCanApprove(false); }
+    };
 
     const fetchTransfers = async () => {
         setLoading(true);
@@ -107,7 +121,7 @@ function LocationTransferList() {
 
             const res = await fetch(url, {
                 method: method,
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(formData)
             });
             const data = await res.json();
@@ -125,20 +139,40 @@ function LocationTransferList() {
     };
 
     const handleApprove = async (id) => {
-        if (!confirm('Are you sure you want to approve and post this transfer? Stock will be updated.')) return;
+        if (!confirm('Are you sure you want to approve this transfer?')) return;
         try {
             const res = await fetch(`/api/location-transfers/${id}/approve`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(data.message || 'Transfer approved successfully');
+                fetchTransfers();
+            } else {
+                alert('Error approving transfer: ' + (data.reason || data.error));
+            }
+        } catch (error) {
+            console.error('Error approving transfer:', error);
+        }
+    };
+
+    const handlePost = async (id) => {
+        if (!confirm('Are you sure you want to post this transfer? Stock will be updated.')) return;
+        try {
+            const res = await fetch(`/api/location-transfers/${id}/post`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
             if (data.success) {
                 alert('Transfer posted successfully');
                 fetchTransfers();
             } else {
-                alert('Error posting transfer: ' + data.error);
+                alert('Error posting transfer: ' + (data.reason || data.error));
             }
         } catch (error) {
-            console.error('Error approving transfer:', error);
+            console.error('Error posting transfer:', error);
         }
     };
 
@@ -146,7 +180,8 @@ function LocationTransferList() {
         if (!confirm('Are you sure you want to delete this draft?')) return;
         try {
             const res = await fetch(`/api/location-transfers/${id}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
             if (data.success) {
@@ -163,11 +198,12 @@ function LocationTransferList() {
         if (!confirm('Are you sure you want to UNPOST/CANCEL this transfer? Stock will be updated (Reverted).')) return;
         try {
             const res = await fetch(`/api/location-transfers/${id}/unpost`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
             if (data.success) {
-                alert('Transfer unposted successfully (Status: Draft)');
+                alert('Transfer unposted successfully (Status: Approved)');
                 fetchTransfers();
             } else {
                 alert('Error unposting transfer: ' + data.error);
@@ -175,6 +211,26 @@ function LocationTransferList() {
         } catch (error) {
             console.error('Error unposting transfer:', error);
             alert('Failed to unpost transfer');
+        }
+    };
+
+    const handleUnapprove = async (id) => {
+        if (!confirm('Are you sure you want to unapprove this transfer?')) return;
+        try {
+            const res = await fetch(`/api/location-transfers/${id}/unapprove`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(data.message || 'Transfer unapproved successfully');
+                fetchTransfers();
+            } else {
+                alert('Error unapproving transfer: ' + data.error);
+            }
+        } catch (error) {
+            console.error('Error unapproving transfer:', error);
+            alert('Failed to unapprove transfer');
         }
     };
 
@@ -603,37 +659,68 @@ function LocationTransferList() {
                                     <td style={{ ...styles.td, textAlign: 'center' }}>
                                         <span style={{
                                             ...styles.badge,
-                                            ...(t.status === 'Posted' ? styles.badgePosted : styles.badgeDraft)
+                                            ...(t.status === 'Posted' ? styles.badgePosted : t.status === 'Approved' ? { background: '#10b981', color: 'white' } : t.status === 'Draft' ? styles.badgeDraft : { background: '#3b82f6', color: 'white' })
                                         }}>
-                                            {t.status === 'Posted' ? '✓ Posted' : '⏳ Draft'}
+                                            {t.status === 'Posted' ? '✓ Posted' : t.status === 'Approved' ? '✅ Approved' : t.status === 'Draft' ? '⏳ Draft' : `⏳ ${t.status}`}
                                         </span>
                                     </td>
                                     <td style={{ ...styles.td, ...styles.tdLast, textAlign: 'center' }}>
-                                        {t.status === 'Draft' ? (
+                                        {t.status === 'Draft' || t.status.startsWith('Pending') ? (
                                             <div style={styles.actionCell}>
+                                                {t.status === 'Draft' && (
+                                                    <button
+                                                        style={{ ...styles.btnPrimary, backgroundColor: '#f59e0b', backgroundImage: 'none', padding: '8px 16px' }}
+                                                        onClick={() => handleEdit(t.id)}
+                                                    >
+                                                        ✏️ Edit
+                                                    </button>
+                                                )}
+                                                {canApprove && (
+                                                    <button
+                                                        style={styles.btnSuccess}
+                                                        onClick={() => handleApprove(t.id)}
+                                                    >
+                                                        ✓ Approve
+                                                    </button>
+                                                )}
+                                                {t.status === 'Draft' && (
+                                                    <button
+                                                        style={styles.btnDanger}
+                                                        onClick={() => handleDelete(t.id)}
+                                                    >
+                                                        ✕ Delete
+                                                    </button>
+                                                )}
+                                                {t.status.startsWith('Pending') && (
+                                                    <button
+                                                        style={{ ...styles.btnSecondary, backgroundColor: '#f97316', padding: '8px 16px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                                                        onClick={() => handleUnapprove(t.id)}
+                                                    >
+                                                        ↩ Unapprove
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : t.status === 'Approved' ? (
+                                            <div style={styles.actionCell}>
+                                                {canApprove && (
+                                                    <button
+                                                        style={{ ...styles.btnPrimary, backgroundColor: '#8b5cf6', backgroundImage: 'none', padding: '8px 16px', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                                                        onClick={() => handlePost(t.id)}
+                                                    >
+                                                        📤 Post
+                                                    </button>
+                                                )}
                                                 <button
-                                                    style={{ ...styles.btnPrimary, backgroundColor: '#f59e0b', backgroundImage: 'none', padding: '8px 16px' }}
-                                                    onClick={() => handleEdit(t.id)}
+                                                    style={{ ...styles.btnSecondary, backgroundColor: '#f97316', padding: '8px 16px', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                                                    onClick={() => handleUnapprove(t.id)}
                                                 >
-                                                    ✏️ Edit
-                                                </button>
-                                                <button
-                                                    style={styles.btnSuccess}
-                                                    onClick={() => handleApprove(t.id)}
-                                                >
-                                                    ✓ Approve
-                                                </button>
-                                                <button
-                                                    style={styles.btnDanger}
-                                                    onClick={() => handleDelete(t.id)}
-                                                >
-                                                    ✕ Delete
+                                                    ↩ Unapprove
                                                 </button>
                                             </div>
                                         ) : t.status === 'Posted' ? (
                                             <div style={styles.actionCell}>
                                                 <button
-                                                    style={{ ...styles.btnSecondary, backgroundColor: '#475569', padding: '8px 16px' }}
+                                                    style={{ ...styles.btnSecondary, backgroundColor: '#475569', padding: '8px 16px', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
                                                     onClick={() => handleUnpost(t.id)}
                                                 >
                                                     ↩ Unpost

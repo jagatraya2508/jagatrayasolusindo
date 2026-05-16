@@ -12,12 +12,10 @@ const connectionString = `Driver={SQL Anywhere 17};Host=${process.env.DB_HOST}:$
 async function test() {
   const connection = await odbc.connect(connectionString);
   try {
-      console.log('--- Test PO Query ---');
-      const sql = `SELECT TOP 1 * FROM RolePermissions`;
-      const result = await connection.query(sql);
+      const result = await connection.query("SELECT cname FROM SYS.SYSCOLUMNS WHERE tname = 'Shipments'");
       console.log(result);
   } catch (e) {
-      console.error('Error:', e.message);
+      console.error('Error:', e);
   }
   await connection.close();
 }
